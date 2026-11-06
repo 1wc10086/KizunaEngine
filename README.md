@@ -1,4 +1,8 @@
 <div align="center">
+    
+<p align="center">
+  <img src="app/assets/images/ic_launcher.png" alt="Logo" width="80">
+</p>
 
 # KizunaEngine
 
