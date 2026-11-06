@@ -13,7 +13,9 @@ import 'core/app_info.dart';
 import 'core/diagnostics/crash.dart';
 import 'core/platform/app_paths.dart';
 import 'core/platform/platform_info.dart';
+import 'core/platform/storage_access.dart';
 import 'core/settings/settings.dart';
+import 'features/library/library_notifier.dart';
 import 'features/settings/settings_notifier.dart';
 
 void main() {
@@ -49,12 +51,31 @@ void main() {
       unawaited(_logCrash(support, exception, stack));
       Zone.current.handleUncaughtError(exception, stack);
     };
-    runApp(ProviderScope(
+    final container = ProviderContainer(
       overrides: [
         settingsRepositoryProvider.overrideWithValue(repository),
       ],
+    );
+    // 首帧之后再申请存储权限：系统设置页不会盖在启动画面上，每次启动最多一次。
+    // 默认游戏根目录在公共存储里（/storage/emulated/0/KizunaEngine），没有
+    // MANAGE_EXTERNAL_STORAGE 时扫描结果为空，所以授权成功后要重新扫一遍。
+    Future<void> requestStorageAccess() async {
+      if (!isAndroidPlatform) {
+        return;
+      }
+      final granted = await requestAllFilesAccessIfNeeded();
+      if (granted) {
+        container.invalidate(libraryProvider);
+      }
+    }
+
+    runApp(UncontrolledProviderScope(
+      container: container,
       child: const KizunaApp(),
     ));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(requestStorageAccess());
+    });
     // 非关键初始化放到 runApp 之后：运行日志（含 pruneRunLogs 的目录遍历）不参与 UI 启动。
     unawaited(_startRunLog(support));
   }, (error, stack) {

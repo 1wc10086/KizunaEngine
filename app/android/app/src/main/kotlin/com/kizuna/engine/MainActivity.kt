@@ -1,11 +1,14 @@
 package com.kizuna.engine
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
@@ -18,9 +21,14 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val FOLDER_CHANNEL = "kizuna/folder"
         private const val REQUEST_PICK_FOLDER = 4711
+        private const val REQUEST_ALL_FILES = 4712
     }
 
     private var pendingFolderResult: MethodChannel.Result? = null
+
+    // “所有文件访问权”在 Android 11+ 只能跳系统设置授予；这里保存等待回包的
+    // MethodChannel.Result，用户从设置页返回后再按实际状态回给 Dart。
+    private var pendingStorageResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
@@ -35,6 +43,8 @@ class MainActivity : FlutterActivity() {
                     installApk(File(path), result)
                 }
                 "abi" -> result.success(abiTag())
+                "hasAllFilesAccess" -> result.success(hasAllFilesAccess())
+                "requestAllFilesAccess" -> requestAllFilesAccess(result)
                 else -> result.notImplemented()
             }
         }
@@ -52,6 +62,72 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    /**
+     * 当前是否拥有“管理所有文件”的能力。
+     *
+     * Android 11+ 的 MANAGE_EXTERNAL_STORAGE 是特殊权限，不能用
+     * requestPermissions 申请，只能查 Environment.isExternalStorageManager()
+     * 并引导用户去系统设置。Android 10 及以下仍然走普通存储运行时权限，
+     * 读写都要有——requestLegacyExternalStorage 只关闭分区存储，不放宽授权。
+     */
+    private fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun requestAllFilesAccess(result: MethodChannel.Result) {
+        if (hasAllFilesAccess()) {
+            result.success(true)
+            return
+        }
+        if (pendingStorageResult != null) {
+            result.error("BUSY", "Another storage permission request is already open", null)
+            return
+        }
+        pendingStorageResult = result
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // 优先打开本应用的专属开关；部分 OEM 没有这个 Activity 时退回总列表。
+            val appIntent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+            try {
+                startActivityForResult(appIntent, REQUEST_ALL_FILES)
+            } catch (_: Exception) {
+                try {
+                    startActivityForResult(
+                        Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                        REQUEST_ALL_FILES,
+                    )
+                } catch (error: Exception) {
+                    pendingStorageResult = null
+                    result.error("UNAVAILABLE", error.message ?: error.toString(), null)
+                }
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                ),
+                REQUEST_ALL_FILES,
+            )
+        } else {
+            // Android 6 以下安装即授予；理论上 hasAllFilesAccess 已经提前返回，
+            // 这里保留兜底并让 lint 的 NewApi 检查看到明确的版本分支。
+            pendingStorageResult = null
+            result.success(true)
         }
     }
 
@@ -113,6 +189,13 @@ class MainActivity : FlutterActivity() {
     @Deprecated("FlutterActivity 仍是 Activity，用兼容回调避免引入额外依赖")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_ALL_FILES) {
+            // 系统设置页不返回授权结果，只能重新查一次；用户没开也会如实回 false。
+            val result = pendingStorageResult
+            pendingStorageResult = null
+            result?.success(hasAllFilesAccess())
+            return
+        }
         if (requestCode != REQUEST_PICK_FOLDER) {
             return
         }
@@ -141,6 +224,21 @@ class MainActivity : FlutterActivity() {
                 "uri" to uri.toString(),
             ),
         )
+    }
+
+    /** Android 10 及以下的 READ/WRITE_EXTERNAL_STORAGE 走普通运行时权限回调。 */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_ALL_FILES) {
+            return
+        }
+        val result = pendingStorageResult
+        pendingStorageResult = null
+        result?.success(hasAllFilesAccess())
     }
 
     /** 把 SAF 的 tree document id 还原成公共存储路径；无法还原时返回 null。 */
