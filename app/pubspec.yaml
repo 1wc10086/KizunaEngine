@@ -1,0 +1,55 @@
+name: kizuna_engine
+description: KizunaEngine galgame engine Flutter frontend.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.13.5 <4.0.0"
+  flutter: "3.47.7"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: ^3.4.3
+  go_router: ^18.0.2
+  dio: ^5.11.1
+  flutter_soloud: ^5.2.0
+  # fvp：基于 libmdk 的视频播放插件。Bishop 的 op.mpg / staffroll.mpg 是
+  # MPEG-1 Program Stream，Flutter 官方 video_player 在 Android 上依赖
+  # MediaCodec，对 MPEG-1 支持很不完整（多数机型直接解不出来）。
+  # fvp 自带 ffmpeg 系解码器，能稳定播这种老格式。
+  fvp: ^0.39.1
+  # fvp 实现的是 VideoPlayerPlatform，播放控制仍走官方 video_player 的控制器，
+  # 所以这里必须是直接依赖（不能只靠 fvp 的传递依赖）。
+  video_player: ^2.14.1
+  charset: ^2.0.1
+  ffi: ^2.2.0
+  path_provider: ^2.1.5
+  intl: ^0.20.3
+  path: ^1.9.1
+  card_settings_ui: ^2.0.1
+  # Material 3 Expressive 组件库。m3e_core 1.1 依赖独立的 material_ui；
+  # material_ui 1.8 新增的 RoundedPolygon 与 m3e_core 自己的形状类型重名，
+  # 编译器会报 “imported from both”。锁在 1.7 以下（1.3 起即可用）。
+  material_ui: ">=1.3.0 <1.8.0"
+  m3e_core: ^1.1.4
+  # 桌面/iOS 的目录选择器。Android 走我们自己实现的 SAF channel，
+  # 其他平台由该插件调用系统原生选择器。
+  file_picker: ^13.3.0
+  # 打开 release 页面 / 仓库 / issue。不能用 kizuna/installer 通道：
+  # 那套只在 Android MainActivity 里实现，桌面/iOS 调用会 MissingPluginException。
+  # url_launcher 在五个平台都有官方实现。
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  generate: true
+  uses-material-design: true
+  assets:
+    - assets/images/

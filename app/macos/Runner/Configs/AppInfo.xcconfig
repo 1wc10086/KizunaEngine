@@ -1,0 +1,25 @@
+// Application-level settings for the Runner target.
+//
+// This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
+// future. If not, the values below would default to using the project name when this becomes a
+// 'flutter create' template.
+
+// The application's name. By default this is also the title of the Flutter window.
+PRODUCT_NAME = KizunaEngine
+
+// The application's bundle identifier
+PRODUCT_BUNDLE_IDENTIFIER = com.kizuna.engine
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 com.kizuna. All rights reserved.
+
+// Apple 平台的 Go 引擎/内核静态库。
+//
+// 引擎与内核共用一份 Go 运行时（见 bridge/cmd/bridge/main.go），所以只链一个
+// libkizuna.a；-force_load 保证没有被 C 代码直接引用的 //export 符号也进入
+// 可执行文件，-export_dynamic 把它们放进动态符号表，Dart 的
+// DynamicLibrary.process() 才能用 dlsym 找到 KzEngine*/Kz*。
+//
+// 这个文件必须存在：CI 在 xcodebuild 之前用 `make -C bridge darwin` 生成。
+OTHER_LDFLAGS = $(inherited) -force_load $(SRCROOT)/Frameworks/libkizuna.a -Wl,-export_dynamic
+DEAD_CODE_STRIPPING = NO
