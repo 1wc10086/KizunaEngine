@@ -23,6 +23,9 @@ type Response struct {
 	Text             string
 	PromptTokens     int
 	CompletionTokens int
+	// FinishReason 是服务端的结束原因（stop/length/...）。推理模型的思维链
+	// 也计入 max_tokens，length 往往意味着正文本被截断，调用方据此分块重试。
+	FinishReason string
 }
 
 type Provider interface {
@@ -36,6 +39,9 @@ type Spec struct {
 	APIKey     string
 	Timeout    time.Duration
 	MaxRetries int
+	// ReasoningEffort 为空时由 provider 自动判断：模型名带 reflection 等
+	// 推理标记则发 "low"，避免思维链吃掉 max_tokens 导致正文为空/截断。
+	ReasoningEffort string
 }
 
 func Detect(baseURL string, apiKey string) (string, error) {

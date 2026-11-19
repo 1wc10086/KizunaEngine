@@ -1,6 +1,35 @@
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+
+typedef _SetCrashLogDirC = Void Function(Pointer<Utf8>);
+typedef _SetCrashLogDirDart = void Function(Pointer<Utf8>);
+
+/// 把 enginec 的原生崩溃日志接到私有目录（与 [logCrash] 同一个 crashes/）。
+///
+/// 引擎被信号（SIGSEGV 等）打死时 Dart 的错误钩子根本没机会跑，报告只能由
+/// C++ 侧的 signal 处理器写盘（enginec/ffi/crashlog.cpp）；这里负责把目录
+/// 告诉它。查不到符号（Go 引擎/旧库）时静默跳过：诊断能力不能反过来弄崩应用。
+void installNativeCrashLog(DynamicLibrary library, String directory) {
+  if (directory.isEmpty) {
+    return;
+  }
+  try {
+    final setDirectory = library.lookupFunction<_SetCrashLogDirC, _SetCrashLogDirDart>(
+        'KzcEngineSetCrashLogDirectory');
+    final buffer = directory.toNativeUtf8();
+    try {
+      setDirectory(buffer);
+    } finally {
+      malloc.free(buffer);
+    }
+  } catch (error) {
+    debugPrint('native crash log not installed: $error');
+  }
+}
 
 const int _crashKeepCount = 12;
 const int _runLogKeepCount = 8;

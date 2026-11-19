@@ -24,7 +24,7 @@ class PlayerControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     return Container(
       color: const Color(0xFF000000),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),

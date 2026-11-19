@@ -5,6 +5,9 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../diagnostics/crash.dart';
+import '../platform/app_paths.dart';
+import '../text/host_text.dart';
 import 'native.dart';
 import 'protocol_consts.dart';
 import 'wire.dart';
@@ -100,7 +103,9 @@ typedef AudioEvent = ({
   int channel,
   int group,
   List<String> names,
-  int frames
+  int frames,
+  // 播放事件要以暂停状态起步（KAG 的 `paused` 在 `play()` 之前设置）。
+  bool paused
 });
 typedef EngineState = ({
   String bgm,
@@ -112,6 +117,10 @@ typedef EngineState = ({
   // 这一帧的对话框是否已经由引擎画进帧位图；为 true 时 Flutter 不应再叠 MessageBox。
   bool engineMessageWindow,
   bool awaitingName,
+  // AwaitingName 对应的如果是原版 GetYesNoMessage，宿主应显示“是/否”。
+  bool promptIsYesNo,
+  // 引擎已经把 prompt 对话框画进帧；宿主不再叠 NameDialog，文字输入只留 IME。
+  bool enginePrompt,
   bool backlogActive,
   bool replayActive,
   int instructionStart,
@@ -164,14 +173,38 @@ typedef SelectItem = ({
   int selectColor
 });
 typedef EngineFrame = ({int width, int height, Uint8List pixels});
+// 引擎排版好的一段文字。原生层不再带字体，Flutter 只按这些参数把字画上去：
+// x/y 是基线起点，width 是这一行的可用宽度（对齐用它算），color/outline 是 0xAARRGGBB。
+typedef TextRun = ({
+  String text,
+  int x,
+  int y,
+  int size,
+  int color,
+  int outline,
+  int shadow,
+  int align,
+  int width,
+  bool bold
+});
+// 一帧的文字快照。引擎在合成阶段就排好版（折行、基线、颜色），宿主只负责按
+// [TextRun] 画出来；旧库不返回 f104 时是空列表，宿主退化成"只画位图"。
+typedef TextRunSnapshot = List<TextRun>;
 // OpFrame(37) 返回的"一帧快照"：text/state/audio 用的字段号与旧 op 完全一致，
 // 因此和 text()/state()/audio() 共用同一套解析函数（_parseText/_parseState/_parseAudio）。
+// runs 是这一帧要叠上去的文字（f104）；旧库不返回该字段时为空列表。
 typedef EngineFrameSnapshot = ({
   EngineStep step,
   EngineText text,
   EngineState state,
-  List<AudioEvent> audio
+  List<AudioEvent> audio,
+  TextRunSnapshot runs
 });
+// OpCompose 的结果：dirty 为假表示这一帧字节没变（Go 侧一个字节都不写），
+// runs 仍是最近一次合成收进来的那一批；为真时 dst 已被写满，runs 属于这一帧。
+// width/height 是引擎当前画布尺寸（0 表示旧库没返回）。游戏切换分辨率时
+// （krkr 的启动选项窗口 480x280 -> 正片 1920x1080）宿主据此重新分配缓冲。
+typedef ComposeResult = ({bool dirty, TextRunSnapshot runs, int width, int height});
 typedef SlotPreview = ({
   String savedAt,
   String summary,
@@ -196,7 +229,7 @@ typedef TitleMenuItem = ({
   bool enabled
 });
 // 待播影片：path 是绝对路径（宿主交给 fvp），serial 用来判重。
-typedef MovieRequest = ({String path, int serial});
+typedef MovieRequest = ({String path, int serial, double audioGain});
 typedef DetectResult = ({String brandId, String brandName});
 
 // 取请求头里的 seq：每条通道的所有 RPC 共用一个回包端口，靠 seq 配对，
@@ -208,16 +241,36 @@ int _requestSeq(Object? message) {
   return ByteData.sublistView(message).getUint32(8, Endian.little);
 }
 
+// 参数 = [回包端口, native 库的基名, 字形光栅化端口]：基名决定 worker 打开
+// libenginego 还是 libenginec（作品走哪个内核由主 isolate 在 spawn 时定，worker
+// 内不再二次判断）。第三项非空表示要安装宿主字形 hook：C 侧在 **调用线程** 上
+// 同步回调，所以 NativeCallable 只能由这个 isolate 创建（见 host_text.dart）。
+// 注意：字形 hook 是进程级全局变量，一旦本 worker 装上，**任何** 调用 enginec
+// 的线程都会被回调进来。所以 enginec 只允许由本 isolate 调 KzcEngineInvoke
+// （EngineBridge.spawn 因此不为 enginec 起 compose worker）。
 // ready 消息 = [worker 的请求端口, engine handle 地址(int)]。地址为 0 表示 handle
 // 没建起来（native 库缺失等）：主 isolate 据此跳过 compose worker，两个 worker 都照旧
 // 对每个请求回错误响应。
-void _engineWorkerMain(SendPort mainPort) {
+void _engineWorkerMain(List<Object?> args) {
+  final mainPort = args[0] as SendPort;
+  final nativeLibrary = args[1] as String;
+  final rasterizerPort = args.length > 2 ? args[2] as SendPort? : null;
+  final crashLogDir = args.length > 3 ? args[3] as String? ?? '' : '';
   final incoming = ReceivePort();
   NativeEngineBindings? bindings;
   Pointer<Void>? handle;
   Object? failure;
   try {
-    bindings = NativeEngineBindings.open();
+    bindings = NativeEngineBindings.open(nativeLibrary);
+    // 原生崩溃日志要早于 create()：从建引擎到进游戏的每一步都可能被信号打死，
+    // 报告只能由 C++ 侧 signal 处理器写进私有目录（见 core/diagnostics/crash.dart）。
+    if (crashLogDir.isNotEmpty) {
+      installNativeCrashLog(bindings.library, crashLogDir);
+    }
+    // 必须早于 create()：引擎一建好就可能开始排版，晚注册会让前几帧白走 FreeType。
+    if (rasterizerPort != null) {
+      installHostText(bindings.library, rasterizerPort);
+    }
     handle = bindings.create();
   } catch (error) {
     failure = error;
@@ -232,6 +285,9 @@ void _engineWorkerMain(SendPort mainPort) {
       if (parts[0] == null) {
         incoming.close();
         reply.send(Uint8List(0));
+        // create() 之前 hook 已经装上：这个 isolate 退出前必须注销，否则 C 侧
+        // 全局指针指向已销毁的回调。
+        uninstallHostText();
         return;
       }
       reply.send(kzBuildErrorResponse(_requestSeq(parts[0]), '$failure'));
@@ -251,9 +307,12 @@ void _engineWorkerMain(SendPort mainPort) {
       owned = null;
       incoming.close();
       reply.send(Uint8List(0));
+      // 先 destroy 再注销 hook：注销会先把 C 侧指针置空，但中间若还有渲染线程，
+      // 顺序反了就会调到已关闭的 NativeCallable。
       if (h != null) {
         engine.destroy(h);
       }
+      uninstallHostText();
       return;
     }
     final request = parts[0] as Uint8List;
@@ -265,13 +324,15 @@ void _engineWorkerMain(SendPort mainPort) {
   });
 }
 
-// compose 专用 worker：只跑 OpCompose，参数是 [回包/控制端口, engine handle 地址]。
+// compose 专用 worker：只跑 OpCompose，参数是 [回包/控制端口, engine handle 地址, native 库基名]。
 //
 // 它不创建也不销毁 handle —— 句柄归属权始终在主 worker 手里，这里拿到的只是一个整数地址，
 // 用 Pointer.fromAddress 还原后直接交给 KzEngineInvoke。Go 侧每次调用都用 uintptr 在
 // handles 表里查同一个 *handle：OpCompose 走 composeMu、其余 op 走 mu，锁顺序固定为
-// composeMu → mu（见 engine/cmd/engine/main.go 的 dispatchCompose），两个线程并发调用
+// composeMu → mu（见 enginego/capi/capi.go 的 dispatchCompose），两个线程并发调用
 // 是设计允许的，因此两个 isolate 共享同一个句柄值是安全的。
+//
+// 库基名必须与主 worker 一致：两个 isolate 打开同一份库，handle 才属于同一张句柄表。
 //
 // 生命周期：收到 shutdown（null）时只关闭自己的输入口并回 ack，绝不 destroy。
 // 主 isolate 必须先等到这个 ack 才能让主 worker destroy handle —— listen 回调是串行
@@ -280,11 +341,12 @@ void _engineWorkerMain(SendPort mainPort) {
 void _composeWorkerMain(List<Object?> args) {
   final mainPort = args[0] as SendPort;
   final handle = Pointer<Void>.fromAddress(args[1] as int);
+  final nativeLibrary = args[2] as String;
   final incoming = ReceivePort();
   mainPort.send(incoming.sendPort);
   NativeEngineBindings? bindings;
   try {
-    bindings = NativeEngineBindings.open();
+    bindings = NativeEngineBindings.open(nativeLibrary);
   } catch (_) {
     // native 库打不开就直接退出：主 isolate 的 onExit 会把这条通道标记为已死并 reject
     // 在飞请求，composeIsolate() 之后每一帧都回退到主 worker 的合成路径，画面不冻结。
@@ -439,6 +501,16 @@ class EngineBridge {
   final _WorkerChannel? _compose;
   final Isolate? _composeIsolate;
   bool _closed = false;
+
+  /// 引擎是否"一帧一调用"自主推进（krkr 内核：每次 run/advance 恰好跑一个
+  /// SDL_AppIterate，动画节奏由引擎自己的墙上时钟决定）。
+  ///
+  /// 宿主原来的 run 自旋（一次 advance 之后连跑最多 64 个 run，直到 120ms 用尽）
+  /// 是为 Go 引擎设计的：Go 的 run 是一次脚本命令预算，返回 cont 表示"还有活没干完"。
+  /// krkr 的 run 返回 cont 只表示"引擎还活着"，于是宿主会以 CPU 上限暴力重绘，
+  /// 每个 16ms tick 都烧掉 120ms 的整帧软件渲染——这正是"有动画时帧率很低、很卡"
+  /// 的来源。krkr 每 tick 只该推进一帧：引擎侧动画按真实时间走，不走预算。
+  final bool frameDriven;
   // 合成缓冲持久复用：原先每帧 calloc+free 3.69MB 会造成持续 GC 压力，
   // 分辨率不变时同一块内存可以一直用。两条通道共用同一块缓冲也不会并发写：
   // 调用方单飞，同一时刻最多只有一个 compose 在飞（Go 侧另有 composeMu 兜底）。
@@ -450,20 +522,48 @@ class EngineBridge {
   // 之后调用方直接走 text+state+audio 三连 RPC（等价旧行为），不再白跑一个失败往返。
   bool _frameSupported = true;
 
-  EngineBridge._(
-      this._main, this._isolate, this._compose, this._composeIsolate);
+  EngineBridge._(this._main, this._isolate, this._compose, this._composeIsolate,
+      {required this.frameDriven});
 
-  static Future<EngineBridge> spawn() async {
+  /// [nativeLibrary] 是要加载的引擎库基名：`enginego`（Go 引擎）或 `enginec`
+  /// （C++ KiriKiri 内核）。两个 worker 必须打开同一份库，handle 才属于同一张句柄表。
+  ///
+  /// 走 enginec 时会顺带装上宿主字形 hook（见 `core/text/host_text.dart`）：C 侧
+  /// 在调用 `KzcEngineInvoke` 的线程上同步回调，而 `NativeCallable.isolateLocal`
+  /// 只允许在创建它的那个 isolate 上被调用。hook 是进程级全局函数指针，compose
+  /// worker 一旦也调 enginec（合成阶段必然排版文字），回调就会跨 isolate 进来 ——
+  /// 那是未定义行为。所以 enginec 不启动 compose worker：OpCompose 回退到主 worker，
+  /// `composeIsolate()` 内部本来就有一条等价且已验证的回退路径。
+  ///
+  /// 代价可以忽略：`enginec::engine_core::invoke` 本来就是所有 op 共用一把 mutex
+  /// （见 enginec/include/enginec/feature/engine.cppm），两个 worker 对 enginec 也
+  /// 从不真并发；只有 Go 引擎的 composeMu/mu 双锁才需要独立通道。
+  static Future<EngineBridge> spawn({String nativeLibrary = 'enginego'}) async {
     final ready = ReceivePort();
     final inbox = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
+    // 字形光栅化服务跑在 root isolate（调用 spawn 的这个）：dart:ui 的文字/
+    // 图像 API 只有这里保证可用。服务是进程内单例（main.dart 启动时已经建好，
+    // 这里 ensure 只是兜底），生命周期跟着进程走，不由单个引擎实例关闭——
+    // 播放页退出后马上又进下一部作品时，worker 会重新连同一个端口。
+    final rasterizer =
+        nativeLibrary == 'enginec' ? HostTextRasterizer.ensure() : null;
+    // 原生崩溃日志目录与 Dart 崩溃日志同一个（<appPrivate>/crashes）：signal
+    // 处理器要尽早拿到目录，所以随 spawn 传给 worker，在 create() 之前装好。
+    String crashLogDir = '';
+    try {
+      final support = await appPrivateDirectory();
+      crashLogDir = '${support.path}/crashes';
+    } catch (_) {
+      // 目录解析失败就让崩溃报告退化到 stderr/logcat，不影响启动。
+    }
     // errorsAreFatal: false —— worker 里的未捕获异常经 errors 端口回报，在飞请求全部 reject；
     // 真死了还有 exits 端口叫醒等待方（原实现只有一个 ready 端口，请求会永久挂住）。
     try {
-      final isolate = await Isolate.spawn(
+      final isolate = await Isolate.spawn<List<Object?>>(
         _engineWorkerMain,
-        ready.sendPort,
+        <Object?>[ready.sendPort, nativeLibrary, rasterizer?.sendPort, crashLogDir],
         onError: errors.sendPort,
         onExit: exits.sendPort,
         errorsAreFatal: false,
@@ -474,7 +574,7 @@ class EngineBridge {
       final handleAddress = hello[1] as int;
       _WorkerChannel? compose;
       Isolate? composeIsolate;
-      if (handleAddress != 0) {
+      if (handleAddress != 0 && rasterizer == null) {
         // compose worker 用自己的一套端口：回包/错误/退出三对都与主 worker 独立，
         // 一边死掉不影响另一边，配对表也不会串号。
         final composeReady = ReceivePort();
@@ -484,7 +584,7 @@ class EngineBridge {
         try {
           composeIsolate = await Isolate.spawn<List<Object?>>(
             _composeWorkerMain,
-            <Object?>[composeReady.sendPort, handleAddress],
+            <Object?>[composeReady.sendPort, handleAddress, nativeLibrary],
             onError: composeErrors.sendPort,
             onExit: composeExits.sendPort,
             errorsAreFatal: false,
@@ -510,6 +610,7 @@ class EngineBridge {
         isolate,
         compose,
         composeIsolate,
+        frameDriven: nativeLibrary == 'enginec',
       );
     } catch (_) {
       // 起不来时（native 库缺失等）端口全部回收：留着就是四个收不到消息的 ReceivePort。
@@ -521,8 +622,8 @@ class EngineBridge {
     }
   }
 
-  static String nativeVersion() =>
-      NativeEngineBindings.open().versionString();
+  static String nativeVersion({String nativeLibrary = 'enginego'}) =>
+      NativeEngineBindings.open(nativeLibrary).versionString();
 
   // 逻辑 RPC 全部经主通道；_closed 由 dispose 置位，之后一律立刻失败（与旧行为一致）。
   Future<KzReader> _invoke(int op, Uint8List payload) async {
@@ -565,6 +666,9 @@ class EngineBridge {
     //    两个 worker 都可能已经死过：channel 内部让 ack 与 exit 竞速，不会无谓地等。
     await _main.shutdown();
     // 5) 两个 isolate 都确认不再执行 FFI 之后才 kill；此后回包不会再来，在飞请求全部 reject。
+    //    主 worker 的 shutdown 分支已经先 destroy 引擎、再 uninstallHostText，所以
+    //    C 侧的字形 hook 到这一步必然已经置空，不需要（也不能）在 root isolate 这里
+    //    再动 NativeCallable——它不是这个 isolate 创建的。
     _composeIsolate?.kill();
     _isolate.kill();
     _main.rejectPending('engine bridge is closed');
@@ -590,6 +694,7 @@ class EngineBridge {
         group: sub.u32(KzField.f69),
         names: sub.strList(KzField.f70),
         frames: sub.u32(KzField.f71),
+        paused: sub.boolean(KzField.audioPaused),
       ));
     });
     return out;
@@ -603,6 +708,27 @@ class EngineBridge {
     );
   }
 
+  // f104 是"列表的列表"：外层列表的每个元素是一段文字的字段表。
+  // 缺失（旧库或还没合成过帧）时 each 什么都不回调，自然得到空列表。
+  static TextRunSnapshot _parseTextRuns(KzReader reader) {
+    final out = <TextRun>[];
+    reader.each(KzField.textRuns, (run) {
+      out.add((
+        text: run.str(KzField.runText),
+        x: run.i32(KzField.f13),
+        y: run.i32(KzField.f14),
+        size: run.i32(KzField.runSize),
+        color: run.u32(KzField.runColor),
+        outline: run.u32(KzField.runOutline),
+        shadow: run.i32(KzField.runShadow),
+        align: run.u32(KzField.runAlign),
+        width: run.i32(KzField.runWidth),
+        bold: run.boolean(KzField.runBold),
+      ));
+    });
+    return out;
+  }
+
   static EngineState _parseState(KzReader reader) {
     return (
       bgm: reader.str(KzField.f35),
@@ -613,6 +739,8 @@ class EngineBridge {
       messageWindowVisible: reader.boolean(KzField.f46),
       engineMessageWindow: reader.boolean(KzField.f82),
       awaitingName: reader.boolean(KzField.f47),
+      promptIsYesNo: reader.boolean(KzField.f92),
+      enginePrompt: reader.boolean(KzField.f103),
       backlogActive: reader.boolean(KzField.f48),
       replayActive: reader.boolean(KzField.f49),
       instructionStart: reader.u32(KzField.f60),
@@ -689,32 +817,37 @@ class EngineBridge {
   }
 
   // 主 worker 上的合成：compose worker 不可用时的回退路径（也保留了改动前的调用方式）。
-  Future<bool> compose(Uint8List dst) => _composeOn(_main, dst);
+  Future<ComposeResult> compose(Uint8List dst, {int width = 0, int height = 0}) =>
+      _composeOn(_main, dst, width, height);
 
   // compose 专用 isolate 上的合成：把 OpCompose 从逻辑链路上摘下来，点击与取帧
   // 现在和它真并发（Go 侧 OpCompose 走 composeMu，pointer/advance/run 走 mu）。
-  // 只改"从哪条通道发 OpCompose"，请求/响应字节格式与字段号一字未动。
-  Future<bool> composeIsolate(Uint8List dst) async {
+  // 两条通道发的是同一个 OpCompose，只是"从哪条通道发"不同。
+  Future<ComposeResult> composeIsolate(Uint8List dst, {int width = 0, int height = 0}) async {
     final channel = _compose;
     if (channel == null || channel.dead) {
       // 第二个 worker 起来失败、或它在运行中崩了：回退主 worker，画面不冻结，
       // 代价只是这一帧的合成重新和逻辑 RPC 串行。
-      return compose(dst);
+      return compose(dst, width: width, height: height);
     }
     try {
-      return await _composeOn(channel, dst);
+      return await _composeOn(channel, dst, width, height);
     } catch (_) {
       // channel.dead：这次请求在飞时 compose worker 死了（onExit 已 reject 在飞请求），
       // 本帧降级到主 worker 重试一次；此后每帧都会走上面那条回退分支。
       if (!channel.dead || _closed) {
         rethrow; // 引擎真的回了错误（未 open 等）：语义与改动前一致，交给调用方
       }
-      return compose(dst);
+      return compose(dst, width: width, height: height);
     }
   }
 
   // OpCompose 的实际执行体，两条通道（主 worker / compose worker）共用。
-  Future<bool> _composeOn(_WorkerChannel channel, Uint8List dst) async {
+  //
+  // 回包里的 f104 是这一帧要画的文字：位置只对刚合成出的位图有效，所以必须和 dirty
+  // 一起回来，宿主拿到就能直接画，不必再排一次 RPC。
+  Future<ComposeResult> _composeOn(
+      _WorkerChannel channel, Uint8List dst, int width, int height) async {
     // Go 侧契约：dirty=false 时完全不写缓冲区。因此持久缓冲不需要清零/回拷，
     // 只在分辨率变化时重新分配，消除每帧 calloc/free 3.69MB 造成的 GC 抖动。
     if (_composeBuf == null || _composeBufSize != dst.length) {
@@ -731,6 +864,10 @@ class EngineBridge {
     final writer = KzWriter();
     writer.u64(KzField.f15, buffer.address);
     writer.u32(KzField.f16, dst.length);
+    // 本次缓冲的几何：krkr 的启动选项窗口是 480x280，选完分辨率后画布会变成
+    // 1920x1080。引擎按这里给出的尺寸写满缓冲区，并回包当前画布尺寸。
+    writer.u32(KzField.surfaceWidth, width);
+    writer.u32(KzField.surfaceHeight, height);
     final flight = channel.invoke(KzOp.compose, writer.takeBytes());
     // 登记在飞请求：dispose 要等它结束才能安全释放缓冲（缓冲地址已经交给 Go 侧写入）。
     _composeFlight = flight;
@@ -742,7 +879,16 @@ class EngineBridge {
         // 这里在主 isolate 上一次 memcpy 把它搬进调用方的 Uint8List。
         dst.setAll(0, buffer.asTypedList(dst.length));
       }
-      return dirty;
+      // f104 与 dirty 无关：原生侧每次合成都会重新排版并返回，dirty 只描述位图。
+      // 旧库不写这个字段时 _parseTextRuns 得到空列表（宿主不叠文字，退化成整帧位图）。
+      final canvasWidth = reader.u32(KzField.canvasWidth);
+      final canvasHeight = reader.u32(KzField.canvasHeight);
+      return (
+        dirty: dirty,
+        runs: _parseTextRuns(reader),
+        width: canvasWidth,
+        height: canvasHeight,
+      );
     } finally {
       _composeFlight = null;
     }
@@ -852,6 +998,7 @@ class EngineBridge {
           text: _parseText(reader),
           state: _parseState(reader),
           audio: _parseAudio(reader),
+          runs: _parseTextRuns(reader),
         );
       } on KzEngineException catch (error) {
         if (error.status != KzStatus.badRequest) {
@@ -860,11 +1007,14 @@ class EngineBridge {
         _frameSupported = false;
       }
     }
+    // 旧三连 RPC 只给状态，不带这一帧的文字排版（f104 只出现在 OpFrame/OpCompose 里）：
+    // 文字改由合成回包提供，这里给空列表。
     return (
       step: EngineStep.cont,
       text: _parseText(await _invoke(KzOp.text, Uint8List(0))),
       state: _parseState(await _invoke(KzOp.state, Uint8List(0))),
       audio: _parseAudio(await _invoke(KzOp.audio, Uint8List(0))),
+      runs: const <TextRun>[],
     );
   }
 
@@ -930,6 +1080,20 @@ class EngineBridge {
     final writer = KzWriter();
     writer.str(KzField.f1, value);
     final reader = await _invoke(KzOp.submitName, writer.takeBytes());
+    return reader.boolean(KzField.f1);
+  }
+
+  Future<bool> setPromptText(String value) async {
+    final writer = KzWriter();
+    writer.str(KzField.f1, value);
+    final reader = await _invoke(KzOp.promptText, writer.takeBytes());
+    return reader.boolean(KzField.f1);
+  }
+
+  Future<bool> submitYesNo(bool yes) async {
+    final writer = KzWriter();
+    writer.boolean(KzField.f2, yes);
+    final reader = await _invoke(KzOp.submitYesNo, writer.takeBytes());
     return reader.boolean(KzField.f1);
   }
 
@@ -1091,7 +1255,15 @@ class EngineBridge {
   /// 取当前待播影片；path 为空表示没有影片。
   Future<MovieRequest> movie() async {
     final reader = await _invoke(KzOp.movie, Uint8List(0));
-    return (path: reader.str(KzField.f68), serial: reader.u32(KzField.f69));
+    // f117 是影片音轨增益；旧库不返回时按 1.0（满音量）处理，与原引擎初值一致。
+    final gain = reader.has(KzField.movieAudioGain)
+        ? reader.f64(KzField.movieAudioGain)
+        : 1.0;
+    return (
+      path: reader.str(KzField.f68),
+      serial: reader.u32(KzField.f69),
+      audioGain: gain,
+    );
   }
 
   /// 影片播完（或被跳过）后通知引擎继续脚本。

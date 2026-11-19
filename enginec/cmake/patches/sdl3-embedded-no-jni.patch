@@ -1,0 +1,28 @@
+diff --git a/src/core/android/SDL_android.c b/src/core/android/SDL_android.c
+--- a/src/core/android/SDL_android.c
++++ b/src/core/android/SDL_android.c
+@@ -2271,5 +2271,13 @@ static bool PrepareAPK(void)
+ static bool PrepareAPK(void)
+ {
++    // Embedded build (no SDLActivity; the library is dlopen'd so JNI_OnLoad
++    // never caches the JavaVM): the JNI calls below would dereference NULL and
++    // crash (observed SIGSEGV at 0x0 from TVPEnumFontsProc -> SDL_GetPathInfo).
++    // Treat every path as "not an APK asset" so callers fall through to the
++    // regular stat/IO path instead.
++    if (!mJavaVM) {
++        return false;
++    }
+     // the assetmanager isn't useful for enumerating directories, so parse the APK directly for that info upfront.
+     bool retval = (APKRootNode != NULL);
+     if (!retval) {
+@@ -2852,4 +2860,10 @@ char *SDL_GetAndroidPackageName(void)
+ char *SDL_GetAndroidPackageName(void)
+ {
++    // Embedded build (see PrepareAPK): without a JavaVM and the SDLActivity
++    // class cached by nativeSetupJNI, the CallStaticObjectMethod below
++    // dereferences NULL. No package name is available in this mode.
++    if (!mJavaVM || !mActivityClass) {
++        return NULL;
++    }
+     // this doesn't currently cache this, because it's only used by SDL_GetExeName, which _does_ cache it.
+     struct LocalReferenceHolder refs = LocalReferenceHolder_Setup(SDL_FUNCTION);

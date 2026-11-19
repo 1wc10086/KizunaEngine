@@ -43,6 +43,14 @@ class KzOp {
   // 影片：引擎给路径，宿主用 fvp 播完后回调。
   static const int movie = 40;
   static const int movieDone = 41;
+  // 回答 GetYesNoMessage（是/否），与 submitName 分开，避免把回答写成字符串。
+  static const int submitYesNo = 42;
+  // prompt 对话框快照（emon 的 GetYesNoMessage/GetStringMessage 由引擎自绘）：
+  // Active=是否挂起，YesNo=询问还是文字输入，Title/Prompt/Edit=文案，
+  // 另有按钮热区列表（f97）供宿主把点击落回引擎。
+  static const int promptDialog = 43;
+  // 引擎自绘 prompt 输入框的文字同步（透明 IME 层用）。
+  static const int promptText = 44;
 }
 
 class KzStatus {
@@ -87,15 +95,26 @@ class KzAudioKind {
   static const int stopVoice = 4;
   static const int stopSe = 5;
   static const int voiceSequence = 6;
+  // volume：带 channel 时是"该通道的绝对混合增益"（引擎已把曲目/主音量乘进来），
+  // 不带 channel 时是全局音乐衰减（Go 引擎旧行为）。krkr 的 BGM 淡入淡出、
+  // 设置里的音量滑杆都靠它落到实际播放器上。
   static const int volume = 7;
   static const int fadeOut = 8;
   static const int stopAll = 9;
+  // pause / resume：引擎侧 WaveSoundBuffer 的 paused，暂停的是解码而不是清掉
+  // 缓冲区，恢复后从原位继续。只有 krkr 内核会发这两个 kind。
+  static const int pause = 10;
+  static const int resume = 11;
 }
 
 class KzOption {
   static const int showMessageFrame = 0;
-  // 宿主跳过状态：引擎据此绘制原版 SKIPPING 覆盖条。
+  // 宿主跳过状态：引擎据此绘制原版 SKIPPING 覆盖条，并把
+  // SkipModeFlag 的跳过位写进脚本变量（AUTO/SKIP/既読 图标由脚本读它）。
   static const int skipOverlay = 1;
+  // 宿主 AUTO 状态：emon 用它维护 SkipModeFlag 的 0x04 位，
+  // 让对话框上的 AUTO 图标由原脚本自己显示/隐藏。
+  static const int autoMode = 2;
 }
 
 class KzField {
@@ -191,4 +210,45 @@ class KzField {
   static const int f89 = 89;
   static const int f90 = 90;
   static const int f91 = 91;
+  static const int f92 = 92;
+  // f93..f102：prompt 对话框（OpPromptDialog=43）的字段，与 enginego
+  // capi.go 的 dispatchPromptDialog 一一对应。宿主用它把引擎自绘的
+  // GetYesNoMessage / GetStringMessage 按钮热区落回 pointer 事件。
+  static const int promptTitle = 93;
+  static const int promptMessage = 94;
+  static const int promptEdit = 95;
+  static const int promptButtonCount = 96;
+  static const int promptButtons = 97;
+  static const int promptButtonId = 98;
+  static const int promptButtonWidth = 99;
+  static const int promptButtonHeight = 100;
+  // f101：prompt 的标题行（Go 侧目前写的是同一个 Title，保留字段号以免
+  // 客户端与原生端对不上）。
+  static const int promptHeading = 101;
+  static const int f103 = 103;
+  // f104..f112：这一帧要画的文字。原生层不再带字体，只给排版结果
+  // （正文、基线坐标、字号、配色、对齐），绘制全部由 Flutter 完成。
+  // 列表元素本身是一个子列表，字段号与 enginec 的 field::text_runs 段一致。
+  static const int textRuns = 104;
+  static const int runText = 105;
+  static const int runSize = 106;
+  static const int runColor = 107;
+  static const int runOutline = 108;
+  static const int runShadow = 109;
+  static const int runAlign = 110;
+  static const int runWidth = 111;
+  static const int runBold = 112;
+  // f113..f116：合成表面与画布尺寸的双向握手。请求里 f113/f114 是宿主本次
+  // 传入缓冲区的宽高（游戏可能刚从 480x280 的启动选项窗口切到 1920x1080），
+  // 回包 f115/f116 是引擎当前画布尺寸，宿主据此重新分配缓冲并映射点击坐标。
+  static const int surfaceWidth = 113;
+  static const int surfaceHeight = 114;
+  static const int canvasWidth = 115;
+  static const int canvasHeight = 116;
+  // f117：影片音轨增益（0..1）。KAG 的 `@movie volume=` 落到引擎 VideoOverlay
+  // 的 audioVolume，宿主据此给播放器设音量；缺省 1.0（原引擎默认满音量）。
+  static const int movieAudioGain = 117;
+  // f118：这条播放事件要以暂停状态起步。KAG 的 SoundBuffer 先设 paused 再 play()，
+  // 先播再暂停会让解码器发出可听见的起手音。
+  static const int audioPaused = 118;
 }

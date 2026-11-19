@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import 'settings_models.dart';
@@ -9,6 +10,16 @@ import 'translator_settings.dart';
 
 export 'settings_models.dart';
 export 'translator_settings.dart';
+
+/// 仓库注入点，由组合根（main.dart）用 `overrideWithValue` 提供。
+///
+/// 放在 core 而不是某个 feature 的 viewmodel 里：设置仓库是"模型层"的一环，
+/// 播放页、翻译页、关于页都要读它，让 feature 之间互相 import viewmodel
+/// 只会制造横向依赖。默认实现故意抛错——漏注入应该在启动期就炸，
+/// 而不是静默落到空目录、让用户以为设置被清空。
+final settingsRepositoryProvider = Provider<SettingsRepository>((ref) {
+  throw UnimplementedError('settingsRepositoryProvider is not overridden');
+});
 
 class SettingsRepository {
   SettingsRepository._(this._directory);

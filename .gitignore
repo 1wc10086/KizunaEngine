@@ -15,10 +15,14 @@ kernel/libkernel.so
 kernel/libkernel.h
 kernel/libkernel-android-arm64.so
 kernel/libkernel-android-arm64.h
-engine/libengine.so
-engine/libengine.h
-engine/libengine-android-arm64.so
-engine/libengine-android-arm64.h
+enginego/libenginego.so
+enginego/libenginego.h
+enginego/libenginego-android-*.so
+enginego/libenginego-android-*.h
+enginego/libenginego-linux-*.so
+enginego/libenginego.dylib
+enginego/enginego.dll
+enginec/build/
 app/build/
 app/.dart_tool/
 # Go 原生库由各平台工作流在构建前生成，不入库。

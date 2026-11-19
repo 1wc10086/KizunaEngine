@@ -204,3 +204,46 @@ func TestOpenAIChatRetryExhausted(t *testing.T) {
 		t.Errorf("error missing status code: %q", err.Error())
 	}
 }
+
+// TestOpenAIReasoningEffort 验证推理模型的 reasoning_effort 只会发给
+// reflection/reasoning/o1/o3/o4 这类模型；普通模型不发未知字段。
+// 同时验证 finish_reason 被带回，供翻译管线判断 length 截断后拆块。
+func TestOpenAIReasoningEffort(t *testing.T) {
+	cases := []struct {
+		name     string
+		model    string
+		explicit string
+		want     string
+	}{
+		{"reflection auto", "reflection/beam:free", "", "low"},
+		{"o3 auto", "o3-mini", "", "low"},
+		{"plain none", "gpt-4o-mini", "", ""},
+		{"explicit high", "gpt-4o-mini", "high", "high"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBody = readJSONBody(t, r)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"content":"ok"}}],"usage":{}}`)
+			}))
+			defer srv.Close()
+			p, err := New(Spec{Kind: "openai", BaseURL: srv.URL, Model: tc.model, APIKey: "k", MaxRetries: 1, ReasoningEffort: tc.explicit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := p.Chat(context.Background(), Request{System: "s", User: "u", MaxTokens: 100})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := gotBody["reasoning_effort"].(string)
+			if got != tc.want {
+				t.Fatalf("reasoning_effort = %q, want %q", got, tc.want)
+			}
+			if resp.FinishReason != "length" {
+				t.Fatalf("finish_reason = %q, want length", resp.FinishReason)
+			}
+		})
+	}
+}

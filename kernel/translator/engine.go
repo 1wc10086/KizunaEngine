@@ -11,6 +11,10 @@ type ProviderSpec struct {
 	APIKey         string `json:"apiKey"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
 	MaxRetries     int    `json:"maxRetries"`
+	// ReasoningEffort 可选（low/medium/high）。留空时 OpenAI provider 会
+	// 对 reflection/reasoning/o1/o3/o4 这类推理模型自动用 low，避免思维链
+	// 吃掉 max_tokens 导致译文为空或尾行缺失。
+	ReasoningEffort string `json:"reasoningEffort"`
 }
 
 type Params struct {

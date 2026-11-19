@@ -9,12 +9,12 @@ class TranslatorParameters {
 
   const TranslatorParameters({
     this.concurrency = 4,
-    this.chunkSize = 30,
+    this.chunkSize = 20,
     this.japaneseRetryLimit = 2,
     this.targetLanguage = '简体中文',
     this.temperature = 0.7,
     this.glossary = '',
-    this.contextLines = 2,
+    this.contextLines = 4,
   });
 
   TranslatorParameters copyWith({
@@ -49,12 +49,12 @@ class TranslatorParameters {
   factory TranslatorParameters.fromJson(Map<String, Object?> json) =>
       TranslatorParameters(
         concurrency: (json['concurrency'] as num?)?.toInt() ?? 4,
-        chunkSize: (json['chunkSize'] as num?)?.toInt() ?? 30,
+        chunkSize: (json['chunkSize'] as num?)?.toInt() ?? 20,
         japaneseRetryLimit: (json['japaneseRetryLimit'] as num?)?.toInt() ?? 2,
         targetLanguage: json['targetLanguage'] as String? ?? '简体中文',
         temperature: (json['temperature'] as num?)?.toDouble() ?? 0.7,
         glossary: json['glossary'] as String? ?? '',
-        contextLines: (json['contextLines'] as num?)?.toInt() ?? 2,
+        contextLines: (json['contextLines'] as num?)?.toInt() ?? 4,
       );
 }
 
@@ -176,7 +176,13 @@ TranslatorParameters _decodeParameters(Object? value) {
     return const TranslatorParameters();
   }
   try {
-    return TranslatorParameters.fromJson(map);
+    final parameters = TranslatorParameters.fromJson(map);
+    // 旧默认值（30 条/2 行上下文）对推理模型偏大：reasoning 会吃掉输出预算、
+    // 末尾行缺失。只迁移仍然停留在旧默认组合的设置，用户手动改过的不动。
+    if (parameters.chunkSize == 30 && parameters.contextLines == 2) {
+      return parameters.copyWith(chunkSize: 20, contextLines: 4);
+    }
+    return parameters;
   } catch (_) {
     return const TranslatorParameters();
   }

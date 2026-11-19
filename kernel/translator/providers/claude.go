@@ -92,8 +92,9 @@ func (p *claudeProvider) Chat(ctx context.Context, req Request) (Response, error
 		return Response{}, statusError(status, body, p.spec.APIKey)
 	}
 	var decoded struct {
-		Content any `json:"content"`
-		Usage   struct {
+		StopReason string `json:"stop_reason"`
+		Content    any    `json:"content"`
+		Usage      struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
@@ -105,5 +106,6 @@ func (p *claudeProvider) Chat(ctx context.Context, req Request) (Response, error
 		Text:             claudeContentText(decoded.Content),
 		PromptTokens:     decoded.Usage.InputTokens,
 		CompletionTokens: decoded.Usage.OutputTokens,
+		FinishReason:     decoded.StopReason,
 	}, nil
 }

@@ -1,6 +1,9 @@
 name: kizuna_engine
 description: KizunaEngine galgame engine Flutter frontend.
 publish_to: none
+# 全仓唯一的版本来源：`tools/version.py` 与 CI 都从这里取值。
+# 改版本只改这一行，然后运行 `python3 tools/version.py stamp`
+# 同步 Windows/Linux/macOS runner 的元数据。
 version: 1.0.0+1
 
 environment:
@@ -12,19 +15,19 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  flutter_riverpod: ^3.4.3
-  go_router: ^18.0.2
+  flutter_riverpod: ^3.5.0
+  go_router: ^18.1.4
   dio: ^5.11.1
-  flutter_soloud: ^5.2.0
-  # fvp：基于 libmdk 的视频播放插件。Bishop 的 op.mpg / staffroll.mpg 是
-  # MPEG-1 Program Stream，Flutter 官方 video_player 在 Android 上依赖
-  # MediaCodec，对 MPEG-1 支持很不完整（多数机型直接解不出来）。
-  # fvp 自带 ffmpeg 系解码器，能稳定播这种老格式。
-  fvp: ^0.39.1
+  flutter_soloud: ^5.2.3
+  # fvp：基于 libmdk + FFmpeg 的播放插件，本项目既用它解影片（Bishop 的
+  # op.mpg / staffroll.mpg 是 MPEG-1 Program Stream，Flutter 官方 video_player
+  # 在 Android 上依赖 MediaCodec，多数机型解不出来），也用它做音频兜底
+  # （flutter_soloud 的 miniaudio 解不了 TwinVQ .vqf 等容器）。
+  # 音频走 `package:fvp/mdk.dart` 的 player API，不经过下面这个 video_player 依赖。
+  fvp: ^0.40.0
   # fvp 实现的是 VideoPlayerPlatform，播放控制仍走官方 video_player 的控制器，
   # 所以这里必须是直接依赖（不能只靠 fvp 的传递依赖）。
   video_player: ^2.14.1
-  charset: ^2.0.1
   ffi: ^2.2.0
   path_provider: ^2.1.5
   intl: ^0.20.3

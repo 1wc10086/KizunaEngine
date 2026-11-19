@@ -1,0 +1,116 @@
+#include "ncbind/ncbind.hpp"
+
+#include <ctype.h>
+#include "TextStream.h"
+#include "TVPStorage.h"
+#include "TVPSettings.h"
+#include "TVPGraphicsLoader.h"
+
+//---------------------------------------------------------------------------
+// JPEG
+//---------------------------------------------------------------------------
+//0 = jlpLow
+//1 = jlpMedium
+//2 = jlpHigh
+extern int TVPJPEGLoadPrecision;
+//---------------------------------------------------------------------------
+
+#define NCB_MODULE_NAME TJS_N("kirikiroid2.dll")
+
+tjs_error krkr_str_ord(tTJSVariant* result,
+                       tjs_int numparams,
+                       tTJSVariant** param,
+                       iTJSDispatch2* objthis)
+{
+    if (numparams == 0)
+        return TJS_E_FAIL;
+    else
+    {
+        tTJSVariant type = *param[0];
+        if (type.Type() == tvtString)
+        {
+            const tTJSVariantString* vs = type.AsStringNoAddRef();
+            if (!vs)
+                return 0;
+            *result = (tjs_int)TJS_utf8_to_unicode((const tjs_char*)*vs);
+        }
+        else
+        {
+            *result = type;
+        }
+    }
+    return TJS_S_OK;
+}
+
+NCB_REGISTER_FUNCTION(_str_ord, krkr_str_ord);
+
+tjs_error krkr_setTextEncoding(tTJSVariant* result,
+                               tjs_int numparams,
+                               tTJSVariant** param,
+                               iTJSDispatch2* objthis)
+{
+    if (numparams == 0)
+        return TJS_E_FAIL;
+    else
+    {
+        tTJSVariant type = *param[0];
+        if (type.Type() == tvtString)
+        {
+            TVPSetDefaultReadEncoding(type);
+        }
+    }
+    return TJS_S_OK;
+}
+
+NCB_ATTACH_FUNCTION(setTextEncoding, Storages, krkr_setTextEncoding);
+
+
+extern tTVPArchive* TVPOpenTARArchive(const ttstr& name, tTJSBinaryStream* st, bool normalizeFileName);
+extern tTVPArchive* TVPOpenZIPArchive(const ttstr& name, tTJSBinaryStream* st, bool normalizeFileName);
+extern tTVPArchive* TVPOpen7ZArchive(const ttstr& name, tTJSBinaryStream* st, bool normalizeFileName);
+extern tTVPRegisterGraphicInfo _jpegGraphicInfo;
+extern tTVPRegisterGraphicInfo _pngGraphicInfo;
+extern tTVPRegisterGraphicInfo _webpGraphicInfo;
+extern tTVPRegisterGraphicInfo _bpgGraphicInfo;
+
+void kirikiroid2_init()
+{
+    // 添加封包格式
+    TVPRegisterArchiveFormat(TVPOpenTARArchive);
+    TVPRegisterArchiveFormat(TVPOpenZIPArchive);
+    TVPRegisterArchiveFormat(TVPOpen7ZArchive);
+    // 添加图片格式
+    tTJSVariant opt;
+    // check TVPJPEGFastLoad option
+    // this specifies precision for JPEG decoding
+    if (TVPGetCommandLine(TJS_N("-jpegdec"), &opt))
+    {
+        ttstr str(opt);
+        if (str == TJS_N("normal"))
+            TVPJPEGLoadPrecision = 1;
+        else if (str == TJS_N("low"))
+            TVPJPEGLoadPrecision = 0;
+        else if (str == TJS_N("high"))
+            TVPJPEGLoadPrecision = 2;
+    }
+    TVPRegisterGraphicLoadingHandler(&_jpegGraphicInfo);
+    TVPRegisterGraphicLoadingHandler(&_pngGraphicInfo);
+    TVPRegisterGraphicLoadingHandler(&_webpGraphicInfo);
+    TVPRegisterGraphicLoadingHandler(&_bpgGraphicInfo);
+    // 添加音频格式
+    
+}
+
+void kirikiroid2_done()
+{
+    TVPUnregisterArchiveFormat(TVPOpenTARArchive);
+    TVPUnregisterArchiveFormat(TVPOpenZIPArchive);
+    TVPUnregisterArchiveFormat(TVPOpen7ZArchive);
+    TVPUnregisterGraphicLoadingHandler(&_jpegGraphicInfo);
+    TVPUnregisterGraphicLoadingHandler(&_pngGraphicInfo);
+    TVPUnregisterGraphicLoadingHandler(&_webpGraphicInfo);
+    TVPUnregisterGraphicLoadingHandler(&_bpgGraphicInfo);
+}
+
+NCB_PRE_REGIST_CALLBACK(kirikiroid2_init);
+NCB_POST_UNREGIST_CALLBACK(kirikiroid2_done);

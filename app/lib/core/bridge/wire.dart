@@ -141,6 +141,12 @@ class KzReader {
     return field.value;
   }
 
+  /// 字段是否存在（不看类型）。
+  ///
+  /// 用于"缺字段时该用非零默认值"的场合：f64 缺字段返回 0.0，而像影片音轨增益
+  /// 这类字段，缺失代表旧库没实现，语义上是满音量 1.0，不能读成静音。
+  bool has(int id) => _fields.containsKey(id);
+
   int u32(int id) {
     final value = _value(id, KzFieldTypes.u32);
     if (value == null || value.length < 4) {

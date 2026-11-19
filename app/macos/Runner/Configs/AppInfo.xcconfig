@@ -3,6 +3,11 @@
 // This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
 // future. If not, the values below would default to using the project name when this becomes a
 // 'flutter create' template.
+//
+// 版本号不在这里：CFBundleShortVersionString / CFBundleVersion 由 Info.plist 取
+// FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER，Flutter 工具按 app/pubspec.yaml 生成
+// Flutter/ephemeral/Flutter-Generated.xcconfig。`python3 tools/version.py stamp`
+// 只在有人手动加了这两个键时才同步它们。
 
 // The application's name. By default this is also the title of the Flutter window.
 PRODUCT_NAME = KizunaEngine

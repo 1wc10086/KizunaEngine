@@ -3,6 +3,8 @@
   "appName": "KizunaEngine",
   "commonConfirm": "确认",
   "commonCancel": "取消",
+  "commonYes": "是",
+  "commonNo": "否",
   "commonBack": "返回",
   "commonRetry": "重试",
   "commonClose": "关闭",
@@ -23,9 +25,6 @@
   "settingsTitle": "设置",
   "settingsGameRoot": "游戏目录",
   "settingsGameRootHint": "留空则使用默认目录",
-  "settingsMasterVolume": "主音量",
-  "settingsMusicVolume": "音乐音量",
-  "settingsVoiceVolume": "语音音量",
   "settingsAutoUpdateCheck": "自动检测更新",
   "toolsTitle": "工具",
   "toolsProcess": "处理",
@@ -54,13 +53,60 @@
   "translationAddPresetFirst": "请先添加模型预设",
   "translationSelectFormatFirst": "请先为文件选择格式",
   "translationStats": "输入 {prompt} · 输出 {completion} · 请求 {requests} · 失败 {failed} · {elapsed}ms · {speed} 条/秒",
+  "@translationStats": {
+    "description": "翻译会话统计：输入/输出 token 数、请求数、失败数、耗时与速度",
+    "placeholders": {
+      "prompt": {
+        "type": "int"
+      },
+      "completion": {
+        "type": "int"
+      },
+      "requests": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "elapsed": {
+        "type": "int"
+      },
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
   "translationLogStarted": "开始翻译 {file}",
+  "@translationLogStarted": {
+    "description": "开始翻译某个文件；file 是文件名",
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
   "translationLogCanceling": "正在取消",
   "translationLogCanceled": "翻译已取消",
   "translationLogFinished": "翻译完成",
   "translationLogTranslated": "翻译完成：{count} 条",
+  "@translationLogTranslated": {
+    "description": "翻译完成；count 是本次翻译的条目数",
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
   "translationLogFailed": "翻译失败",
   "translationLogResidual": "残留 {detail} 条待重译",
+  "@translationLogResidual": {
+    "description": "仍有待重译条目；detail 形如 “12/3”",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
   "translationFiles": "翻译文件",
   "translationAddFile": "添加翻译文件",
   "translationEditFile": "编辑翻译文件",
@@ -142,7 +188,6 @@
   "aboutIconSemantics": "应用图标",
   "aboutInstallFailed": "安装失败",
   "aboutBrowserOpened": "已在浏览器中打开下载链接",
-  "updateDialogTitle": "发现新版本",
   "updateDownloadTitle": "正在下载更新",
   "updateInstallHint": "下载完成后将调用系统安装",
   "toolsFileProcess": "处理文件",
@@ -167,5 +212,59 @@
   "playerSave": "存档",
   "playerLoad": "读档",
   "playerSlotEmpty": "空存档位",
-  "playerSlotSaveTitle": "手动存档"
+  "playerSlotSaveTitle": "手动存档",
+  "playerFaultedTitle": "游戏已停止",
+  "playerFaultedUnknown": "引擎停止时没有给出原因。游戏数据可能不完整，或版本不受支持。",
+  "playerFaultedRetryHint": "请返回游戏库后重新进入游戏。如问题依旧，请确认游戏目录完整。",
+  "updateDialogTitleVersion": "发现新版本 {version}",
+  "@updateDialogTitleVersion": {
+    "description": "更新对话框标题（带版本号）",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "updateErrorDetail": "{label}：{detail}",
+  "@updateErrorDetail": {
+    "description": "更新失败提示；label 是“下载失败/安装失败”，detail 是底层错误",
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "playerFaultedReasonWithDetail": "原因：\n{reason}",
+  "@playerFaultedReasonWithDetail": {
+    "description": "引擎异常停止的原因正文",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "playerSlotLabel": "{index}. {title}",
+  "@playerSlotLabel": {
+    "description": "存档位标签：序号 + 标题或“空存档位”",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "toolsDoneElapsed": "完成，耗时 {elapsed} 毫秒",
+  "@toolsDoneElapsed": {
+    "description": "处理完成的耗时提示",
+    "placeholders": {
+      "elapsed": {
+        "type": "int"
+      }
+    }
+  }
 }

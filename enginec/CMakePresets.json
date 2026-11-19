@@ -1,0 +1,69 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "android-arm64",
+      "displayName": "Android arm64-v8a Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/android-arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "arm64-v8a",
+        "ANDROID_PLATFORM": "android-24",
+        "ANDROID_STL": "c++_static",
+        "ENGINEC_BUILD_TESTS": "OFF",
+        "ENGINEC_FLUTTER_JNILIBS": "${sourceDir}/../app/android/app/src/main/jniLibs"
+      }
+    },
+    {
+      "name": "android-arm32",
+      "displayName": "Android armeabi-v7a Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/android-arm32",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "armeabi-v7a",
+        "ANDROID_PLATFORM": "android-24",
+        "ANDROID_STL": "c++_static",
+        "ENGINEC_BUILD_TESTS": "OFF",
+        "ENGINEC_FLUTTER_JNILIBS": "${sourceDir}/../app/android/app/src/main/jniLibs"
+      }
+    },
+    {
+      "name": "android-x64",
+      "displayName": "Android x86_64 Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/android-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "x86_64",
+        "ANDROID_PLATFORM": "android-24",
+        "ANDROID_STL": "c++_static",
+        "ENGINEC_BUILD_TESTS": "OFF",
+        "ENGINEC_FLUTTER_JNILIBS": "${sourceDir}/../app/android/app/src/main/jniLibs"
+      }
+    },
+    {
+      "name": "host",
+      "displayName": "Host (tests, clang + libc++)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang",
+        "ENGINEC_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "android-arm64", "configurePreset": "android-arm64", "targets": ["flutter_install"] },
+    { "name": "android-arm32", "configurePreset": "android-arm32", "targets": ["flutter_install"] },
+    { "name": "android-x64", "configurePreset": "android-x64", "targets": ["flutter_install"] },
+    { "name": "host", "configurePreset": "host" }
+  ]
+}

@@ -9,9 +9,11 @@ import '../../core/audio/game_audio.dart' as audio_core;
 import '../../core/bridge/engine_bridge.dart';
 import '../../core/bridge/protocol_consts.dart';
 import '../../core/platform/app_paths.dart';
-import '../../core/settings/settings.dart';
+import '../../core/platform/external_links.dart';
+import '../../core/platform/platform_info.dart';
+import '../../core/settings/settings_snapshot.dart';
 import '../../core/widgets/kizuna_loading.dart';
-import '../settings/settings_notifier.dart';
+import '../settings/viewmodel/settings_notifier.dart';
 import 'controls.dart';
 import 'player_chrome.dart';
 import 'player_notifier.dart';
@@ -30,14 +32,47 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   static const Duration _hideDelay = Duration(seconds: 4);
 
-  bool _landscape = false;
+  /// 播放页默认横屏（需求：进游戏就是全屏横屏画面）。
+  ///
+  /// 初值给 true 是为了"第一帧就对"：initState 里发出横屏请求，但平台把
+  /// 屏幕转过来要一两帧，这期间 MediaQuery 仍是竖屏。若按 MediaQuery 决定
+  /// 布局，用户会先看到一帧竖屏工具条再被掰成横屏。
+  bool _landscape = true;
   bool _toolbarVisible = true;
+
+  /// 还在等平台真正切到横屏。为 true 时忽略"竖屏"的 MediaQuery 结果，
+  /// 避免上面说的闪一帧；一旦看到横屏就清除。
+  ///
+  /// 不能无限等：Android 16 起大屏会忽略应用的方向锁，折叠屏/平板也可能
+  /// 一直保持竖屏。[_landscapeWait] 到期就接受真实朝向，避免永远按横屏
+  /// 布局渲染一个竖屏窗口。
+  bool _awaitingLandscape = true;
+  Timer? _landscapeWait;
   Orientation? _orientation;
   Timer? _hideTimer;
 
   @override
   void initState() {
     super.initState();
+    // 姿态请求放在首帧前：整个播放页从出现起就是横屏沉浸式。
+    if (isMobilePlatform) {
+      unawaited(enterPlayerLandscape());
+      // 600ms 后无论平台有没有真的转过来都接受真实方向：横屏请求在某些
+      // 设备上会被系统忽略，一直按横屏排版只会得到一块竖着的黑边画面。
+      _landscapeWait = Timer(const Duration(milliseconds: 600), () {
+        if (!mounted || !_awaitingLandscape) {
+          return;
+        }
+        setState(() {
+          _awaitingLandscape = false;
+          _landscape = MediaQuery.orientationOf(context) == Orientation.landscape;
+          _toolbarVisible = true;
+        });
+        _scheduleHide();
+      });
+    } else {
+      _awaitingLandscape = false;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final audio = ref.read(globalAudioProvider);
       audio.onCompleted = (file, voice, channel) {
@@ -63,6 +98,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       return;
     }
     _orientation = orientation;
+    if (_awaitingLandscape) {
+      if (orientation != Orientation.landscape) {
+        return;
+      }
+      _awaitingLandscape = false;
+      _landscapeWait?.cancel();
+      _landscapeWait = null;
+    }
     _landscape = orientation == Orientation.landscape;
     _toolbarVisible = true;
     _scheduleHide();
@@ -72,8 +115,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void dispose() {
     _hideTimer?.cancel();
     _hideTimer = null;
-    enterPortrait();
-    restoreSystemUi();
+    _landscapeWait?.cancel();
+    _landscapeWait = null;
+    unawaited(leavePlayer());
+    unawaited(restoreSystemUi());
     super.dispose();
   }
 
@@ -114,6 +159,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void _scheduleHide() {
     _hideTimer?.cancel();
     _hideTimer = null;
+    // 只有横屏自动收起：横屏是沉浸式全屏，工具条会盖住引擎画在底部的内容；
+    // 竖屏保留常驻工具条（画面本来就窄，收起后玩家找不到入口）。
     if (!_landscape || !_toolbarVisible) {
       return;
     }
@@ -138,12 +185,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final next = !_landscape;
     setState(() {
       _landscape = next;
+      // 用户手动切了方向：之后以真实朝向为准，不再等"自动横屏"。
+      _awaitingLandscape = false;
       _toolbarVisible = true;
     });
     if (next) {
-      enterLandscape();
+      unawaited(enterPlayerLandscape());
     } else {
-      enterPortrait();
+      unawaited(enterPortrait());
     }
     _scheduleHide();
   }
@@ -151,13 +200,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void _exit() {
     _hideTimer?.cancel();
     _hideTimer = null;
-    enterPortrait();
-    restoreSystemUi();
+    unawaited(leavePlayer());
+    unawaited(restoreSystemUi());
     context.pop();
   }
 
   Future<void> _editBuexMessage() async {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final controller = TextEditingController();
     final result = await showDialog<String>(
       context: context,
@@ -189,15 +238,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   /// 宿主兜底存档/读档面板。
   ///
-  /// 作品没有 [data screen] 布局时（例如 Ancient 的《特別病棟》），原版存档界面
-  /// 无法由引擎按配置绘制。这里直接用引擎的 slots/save/load op，至少保证玩家
-  /// 能完成“存档 -> 退出 -> 读档继续”的完整流程；有原版界面的作品不会走到这里。
+  /// 只在"引擎没有原版存档界面"时使用：本作（TMR-Hiro）的存读档由引擎按
+  /// sys_save_base/sys_load_base 与 [SAVE]/[LOAD] 布局自绘（含缩略图、页签、
+  /// 自动存档/删档按钮），宿主动作 save/load 已经不再触发这里。保留它是因为
+  /// 其它品牌（如 Bishop Ancient）仍然只有这套兜底面板。
   Future<void> _showSlots({required bool saveMode}) async {
     final session = ref.read(playerSessionProvider);
     if (session == null) {
       return;
     }
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final slots = await session.slots();
     if (!mounted) {
       return;
@@ -233,7 +283,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           Text(
-                            '${slot.index + 1}. ${slot.exists ? slot.title : l10n.playerSlotEmpty}',
+                            // 序号用列表位置而不是 slot.index：各品牌引擎的槽位号
+                            // 起始值不一致（有的 0 起、有的 1 起），直接 +1 显示会
+                            // 差一位；列表位置永远是从 1 开始的连续编号。
+                            l10n.playerSlotLabel(
+                              index + 1,
+                              slot.exists ? slot.title : l10n.playerSlotEmpty,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleSmall,
@@ -273,14 +329,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       return;
     }
     if (saveMode) {
-      final saved = await session.save(picked, l10n.playerSlotSaveTitle);
+      final saved = await ref
+          .read(playerProvider.notifier)
+          .saveSlot(picked, title: l10n.playerSlotSaveTitle);
       if (!saved && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(l10n.commonError)),
         );
       }
     } else {
-      await session.load(picked);
+      await ref.read(playerProvider.notifier).loadSlot(picked);
     }
   }
 
@@ -299,6 +357,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
   }
 
+  /// 竖屏下的布局。
+  ///
+  /// 竖屏不是默认游玩姿态（进游戏即横屏），这里保持"画面上、工具条下"的
+  /// 常驻布局：竖屏画面窄，工具条叠上去会挡住引擎底部对话框的大半。
   Widget _portraitBody(Widget stage, Widget controls) {
     return SafeArea(
       child: Column(
@@ -372,7 +434,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     ref.listen(
       playerProvider.select((value) => value.error),
       (previous, next) {
@@ -395,6 +457,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         if (!context.mounted) {
           return;
         }
+        // 脚本 #Run 的链接请求：原引擎用 ShellExecute 开浏览器，这里在 switch
+        // 之前拦截 url: 前缀的请求，交给系统浏览器打开，不要落到界面动作分支。
+        if (request.startsWith('url:')) {
+          unawaited(openExternalUrl(request.substring(4)));
+          return;
+        }
         switch (request) {
           case 'settings':
             context.push('/settings');
@@ -413,11 +481,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           case 'backlog':
             ref.read(playerProvider.notifier).openBacklog();
           case 'edit_message':
-            _editBuexMessage();
+            unawaited(_editBuexMessage());
+          // 存档/读档界面由引擎自绘（sys_save_base + sys_save_button，与原版
+          // 同一套布局与缩略图）。宿主只在"引擎明确不画对话框"的作品上才需要
+          // 自己的面板：engineMessageWindow 为真表示该品牌的所有界面都由引擎
+          // 绘制，此时叠一层 Flutter 面板会盖住原版界面（甚至重复存档）。
           case 'save':
-            _showSlots(saveMode: true);
+            if (!ref.read(playerProvider).engineMessageWindow) {
+              unawaited(_showSlots(saveMode: true));
+            }
           case 'load':
-            _showSlots(saveMode: false);
+            if (!ref.read(playerProvider).engineMessageWindow) {
+              unawaited(_showSlots(saveMode: false));
+            }
         }
       },
     );
@@ -426,9 +502,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       (previous, next) {
         if (next != null && previous == null) {
           final settings =
-              ref.read(appSettingsProvider).value ?? const AppSettings();
+              ref.read(appSettingsProvider).valueOrDefault;
           next.setOption(
               KzOption.showMessageFrame, settings.showMessageFrame);
+        }
+      },
+    );
+    // 会话已存在时玩家改设置，也要把开关推给引擎（否则要退出重进才生效）。
+    // 这条监听放在播放页而不是设置层：设置层 import 播放层会让两个 feature
+    // 形成环，而且引擎没跑时这次调用本来就没有意义。
+    ref.listen(
+      appSettingsProvider.select(
+        (value) => value.valueOrDefault.showMessageFrame,
+      ),
+      (previous, next) {
+        if (previous == next) {
+          return;
+        }
+        final session = ref.read(playerSessionProvider);
+        if (session != null) {
+          session.setOption(KzOption.showMessageFrame, next);
         }
       },
     );
@@ -574,6 +667,8 @@ class _RealAudioAdapter implements GameAudio {
   @override
   Future<void> dispatchEvent(AudioEvent event) => _inner.dispatchEvent(event);
 
+  // 全局实例要跨页面复用（SoLoud 初始化与解码缓存很贵），但它此刻播放的是
+  // 上一局的声音：离开播放页必须停掉，否则 BGM 会一直响在游戏列表上。
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() => _inner.stopAll();
 }

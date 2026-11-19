@@ -15,7 +15,7 @@ class ChoicesOverlay extends StatelessWidget {
     if (choices.isEmpty) {
       return const SizedBox.shrink();
     }
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     return Positioned.fill(
       child: Container(
         color: const Color(0x66000000),

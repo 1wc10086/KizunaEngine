@@ -26,13 +26,14 @@ typedef _KzVersionDart = Pointer<Utf8> Function();
 
 /// 按平台列出原生库的候选加载方式，顺序即优先级。
 ///
-/// [base] 是不带前后缀的名字：`engine` / `kernel`。
+/// [base] 是不带前后缀的名字：`enginego` / `enginec` / `kernel`。
 ///
 /// - iOS：引擎与内核由 `bridge/` 模块编译成一个 c-archive 静态链接进
 ///   Runner 可执行文件（iOS 不支持 c-shared，两个 archive 又会撞 Go 运行时
 ///   符号），所以符号在进程镜像里，用 [DynamicLibrary.process]。
-/// - macOS：发布包同样静态链接 bridge；保留 dylib 候选是为了兼容旧布局
-///   （把 .dylib 放进 Contents/Frameworks 的调试构建）。
+///   此时 [base] 选不了库：符号来自链接阶段，两种引擎不能同时进同一个镜像。
+/// - macOS：enginego 的发布包静态链接 bridge；保留 dylib 候选是为了兼容旧布局
+///   （把 .dylib 放进 Contents/Frameworks 的调试构建）。enginec 只有 dylib。
 /// - Android：.so 由 APK 的 lib/<abi>/ 提供，系统按包名搜索。
 /// - Windows：DLL 放在 exe 旁边，绝对路径优先，避免 PATH 上有同名旧库。
 /// - Linux：Flutter runner 的 RPATH 是 `$ORIGIN/lib`，先按 bundle 布局找，
@@ -54,14 +55,22 @@ List<DynamicLibrary Function()> _nativeLoaders(String base) {
     ];
   }
   if (Platform.isMacOS) {
-    return <DynamicLibrary Function()>[
-      () => DynamicLibrary.process(),
+    final dylibs = <DynamicLibrary Function()>[
       () => DynamicLibrary.open(
             p.join(exeDir, '..', 'Frameworks', 'lib$base.dylib'),
           ),
       () => DynamicLibrary.open(p.join(exeDir, 'lib$base.dylib')),
       () => DynamicLibrary.open('lib$base.dylib'),
     ];
+    // 进程镜像里静态链接的是 bridge（Go 引擎）的 KzEngine*：enginego 先试它，
+    // 避免捡到旧的 libenginego.dylib；enginec 从不进进程镜像，对它的 process()
+    // 只可能探到另一个引擎，所以干脆不列，缺 dylib 时报"打不开"而不是用错内核。
+    return base == 'enginego'
+        ? <DynamicLibrary Function()>[
+            () => DynamicLibrary.process(),
+            ...dylibs,
+          ]
+        : dylibs;
   }
   return <DynamicLibrary Function()>[
     () => DynamicLibrary.open(p.join(exeDir, 'lib', 'lib$base.so')),
@@ -93,26 +102,46 @@ DynamicLibrary _tryOpen(String base, String probe) {
 
 class NativeEngineBindings {
   final DynamicLibrary library;
+  /// 打开的是哪一份实现：`enginego` / `enginec`。两份库的 C ABI 只有
+  /// [versionString] 的字符串所有权不同（见 [_freesVersion]）。
+  final String nativeLibrary;
+  // C ABI 前缀：Go 版导出 KzEngine*，C++ 版导出 KzcEngine*。两份实现符号不同，
+  // 这样 iOS/macOS 可以把两个静态库链进同一个进程而不会撞符号（协议字节完全
+  // 相同，只有入口名不同）。
+  String get _prefix => nativeLibrary == 'enginec' ? 'KzcEngine' : 'KzEngine';
+
+  // enginec 的 KzcEngineVersion 返回静态字符串（见 enginec/ffi/enginec_ffi.cpp），
+  // 对它调 KzcEngineFree 就是 free 一个非堆指针；Go 版返回 C.CString，必须释放。
+  bool get _freesVersion => nativeLibrary != 'enginec';
   late final _KzEngineCreateDart _create =
       library.lookupFunction<_KzEngineCreateC, _KzEngineCreateDart>(
-          'KzEngineCreate');
+          '${_prefix}Create');
   late final _KzEngineDestroyDart _destroy =
       library.lookupFunction<_KzEngineDestroyC, _KzEngineDestroyDart>(
-          'KzEngineDestroy');
+          '${_prefix}Destroy');
   late final _KzEngineInvokeDart _invoke =
       library.lookupFunction<_KzEngineInvokeC, _KzEngineInvokeDart>(
-          'KzEngineInvoke');
+          '${_prefix}Invoke');
   late final _KzEngineFreeDart _free =
-      library.lookupFunction<_KzEngineFreeC, _KzEngineFreeDart>('KzEngineFree');
+      library.lookupFunction<_KzEngineFreeC, _KzEngineFreeDart>(
+          '${_prefix}Free');
   late final _KzEngineVersionDart _version =
       library.lookupFunction<_KzEngineVersionC, _KzEngineVersionDart>(
-          'KzEngineVersion');
+          '${_prefix}Version');
 
-  NativeEngineBindings(this.library);
+  NativeEngineBindings(this.library, this.nativeLibrary);
 
+  /// 打开 [nativeLibrary] 这一份引擎实现：`enginego`（Go 版）或 `enginec`（C++ 内核）。
+  ///
+  /// 两份库说同一套协议，入口符号分别是 KzEngine* 与 KzcEngine*；宿主只按作品
+  /// 换一个库名，其余调用路径完全不变。
+  ///
   /// 第一个符号同时充当“库对不对”的探针。
-  factory NativeEngineBindings.open() =>
-      NativeEngineBindings(_tryOpen('engine', 'KzEngineCreate'));
+  factory NativeEngineBindings.open(String nativeLibrary) {
+    final prefix = nativeLibrary == 'enginec' ? 'KzcEngine' : 'KzEngine';
+    return NativeEngineBindings(
+        _tryOpen(nativeLibrary, '${prefix}Create'), nativeLibrary);
+  }
 
   Pointer<Void> create() => _create();
 
@@ -125,7 +154,7 @@ class NativeEngineBindings {
     try {
       final responsePtr = _invoke(handle, requestPtr, request.length, outLen);
       if (responsePtr == nullptr) {
-        throw StateError('KzEngineInvoke returned null');
+        throw StateError('${_prefix}Invoke returned null');
       }
       try {
         final length = outLen.value;
@@ -142,12 +171,14 @@ class NativeEngineBindings {
   String versionString() {
     final ptr = _version();
     if (ptr == nullptr) {
-      throw StateError('KzEngineVersion returned null');
+      throw StateError('${_prefix}Version returned null');
     }
     try {
       return ptr.toDartString();
     } finally {
-      _free(ptr.cast());
+      if (_freesVersion) {
+        _free(ptr.cast());
+      }
     }
   }
 }

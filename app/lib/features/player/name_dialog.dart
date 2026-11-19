@@ -5,7 +5,18 @@ class NameDialog extends StatefulWidget {
   final String prompt;
   final Future<void> Function(String value) onSubmit;
 
-  const NameDialog({super.key, required this.prompt, required this.onSubmit});
+  /// true 表示这是原版 GetYesNoMessage 的确认框：不显示输入框，
+  /// 只给"是/否"两个按钮，回答由 onYesNo 以 1/0 提交。
+  final bool yesNo;
+  final Future<void> Function(bool yes)? onYesNo;
+
+  const NameDialog({
+    super.key,
+    required this.prompt,
+    required this.onSubmit,
+    this.yesNo = false,
+    this.onYesNo,
+  });
 
   @override
   State<NameDialog> createState() => _NameDialogState();
@@ -39,9 +50,27 @@ class _NameDialogState extends State<NameDialog> {
     }
   }
 
+  Future<void> _answer(bool yes) async {
+    if (_busy) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+    });
+    try {
+      await widget.onYesNo?.call(yes);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     return Positioned.fill(
       child: Container(
         color: const Color(0x99000000),
@@ -58,45 +87,64 @@ class _NameDialogState extends State<NameDialog> {
                 children: <Widget>[
                   Text(
                     widget.prompt.isEmpty
-                        ? l10n.playerNameHint
+                        ? (widget.yesNo
+                            ? l10n.commonConfirm
+                            : l10n.playerNameHint)
                         : widget.prompt,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _controller,
-                    autofocus: true,
-                    enabled: !_busy,
-                    decoration: InputDecoration(
-                      hintText: l10n.playerNameHint,
+                  if (widget.yesNo)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[
+                        TextButton(
+                          onPressed: _busy ? null : () => _answer(false),
+                          child: Text(l10n.commonNo),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: _busy ? null : () => _answer(true),
+                          child: Text(l10n.commonYes),
+                        ),
+                      ],
+                    )
+                  else ...<Widget>[
+                    TextField(
+                      controller: _controller,
+                      autofocus: true,
+                      enabled: !_busy,
+                      decoration: InputDecoration(
+                        hintText: l10n.playerNameHint,
+                      ),
+                      onSubmitted: (value) {
+                        _submit(value.trim());
+                      },
                     ),
-                    onSubmitted: (value) {
-                      _submit(value.trim());
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () {
-                                _submit('');
-                              },
-                        child: Text(l10n.commonCancel),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: _busy
-                            ? null
-                            : () {
-                                _submit(_controller.text.trim());
-                              },
-                        child: Text(l10n.commonConfirm),
-                      ),
-                    ],
-                  ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[
+                        TextButton(
+                          onPressed: _busy
+                              ? null
+                              : () {
+                                  _submit('');
+                                },
+                          child: Text(l10n.commonCancel),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: _busy
+                              ? null
+                              : () {
+                                  _submit(_controller.text.trim());
+                                },
+                          child: Text(l10n.commonConfirm),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

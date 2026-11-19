@@ -5,7 +5,12 @@ import 'package:kizuna_engine/l10n/app_localizations.dart';
 import '../../core/bridge/engine_bridge.dart';
 import 'player_notifier.dart';
 
-/// 主界面菜单项的 key，必须和 bsxx.cfg `[title phase]` 里的键名一致。
+/// 主界面菜单项的 key。
+///
+/// Bishop 的 key 来自 bsxx.cfg `[title phase]`（op/start/load/museum/config/quit）；
+/// 其它品牌（Over-Dose、BLACKPACKAGE、TMR-Hiro）用的是自己的标签名
+/// （START/LOAD/OMAKE/END、CONTINUE/…）。这里把两套写法集中在一处，
+/// 免得每个调用点多写一串字面量判断。
 class TitleKeys {
   static const String opening = 'op';
   static const String start = 'start';
@@ -13,6 +18,15 @@ class TitleKeys {
   static const String museum = 'museum';
   static const String config = 'config';
   static const String quit = 'quit';
+
+  /// TMR-Hiro 标题脚本里的“退出”标签（`start` 的 op1/0x23 记录）。
+  static const String tmrEnd = 'END';
+
+  /// 退出类（需要先弹宿主确认框）。
+  ///
+  /// 只有 Bishop 的 quit 需要宿主弹框：TMR-Hiro 的「終了」由引擎自己弹
+  /// 游戏内确认框（原版就是这样），宿主再弹一个会叠成两层。
+  static const Set<String> quits = <String>{quit};
 }
 
 /// 主界面（标题菜单）的交互层。
@@ -95,19 +109,19 @@ class TitleLayer extends ConsumerWidget {
   }
 
   Future<void> _select(BuildContext context, TitleMenuItem item) async {
-    switch (item.key) {
-      case TitleKeys.quit:
-        await _confirmQuit(context);
-        return;
-      default:
-        // start/op 进剧情，load/museum 由引擎打开游戏内界面，
-        // config 由引擎发 "settings" 宿主动作；宿主不再自己实现这些界面。
-        await notifier.selectTitleItem(item.key);
+    // 退出要先确认：两款引擎的“退出”标签不同（quit / END），
+    // 统一由 TitleKeys.quits 判定。
+    if (TitleKeys.quits.contains(item.key)) {
+      await _confirmQuit(context);
+      return;
     }
+    // 其余都交回引擎：start/op 进剧情，load/OMAKE/museum 由引擎发宿主动作，
+    // 宿主不再自己实现这些界面（存档列表除外，它走 hostRequest=load）。
+    await notifier.selectTitleItem(item.key);
   }
 
   Future<void> _confirmQuit(BuildContext context) async {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(

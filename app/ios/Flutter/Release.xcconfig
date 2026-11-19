@@ -1,1 +1,7 @@
 #include "Generated.xcconfig"
+
+// enginec (KiriKiri, SDL3 offscreen runtime) is linked into Runner alongside the
+// Go bridge. The archive is a libtool merge of enginec_ffi, SDL3, FreeType and the
+// codecs; -force_load is required because the KzcEngine* entry points are reached
+// by dlsym on DynamicLibrary.process().
+OTHER_LDFLAGS = $(inherited) -force_load "$(SRCROOT)/Frameworks/libenginec_all.a" -lc++ -lz -lobjc -liconv -framework UIKit -framework Foundation -framework CoreGraphics -framework CoreMotion -framework CoreAudio -framework AudioToolbox -framework AVFoundation -framework GameController -framework Metal -framework QuartzCore -framework OpenGLES -framework CoreHaptics -framework CoreBluetooth -framework CoreVideo -framework CoreMedia -framework ImageIO

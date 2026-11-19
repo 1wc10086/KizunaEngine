@@ -91,10 +91,10 @@ func TestNormalizeRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
-	if cfg.concurrency != 4 || cfg.chunkSize != 30 || cfg.retryLimit != 0 {
+	if cfg.concurrency != 4 || cfg.chunkSize != 20 || cfg.retryLimit != 0 {
 		t.Fatalf("defaults=%+v", cfg)
 	}
-	if cfg.targetLang != "简体中文" || cfg.contextLines != 2 {
+	if cfg.targetLang != "简体中文" || cfg.contextLines != 4 {
 		t.Fatalf("defaults=%+v", cfg)
 	}
 	if _, err := normalizeRequest(Request{}); err == nil {

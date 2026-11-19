@@ -23,10 +23,11 @@ type openaiWireMessage struct {
 }
 
 type openaiChatBody struct {
-	Model       string              `json:"model"`
-	Messages    []openaiWireMessage `json:"messages"`
-	Temperature float64             `json:"temperature"`
-	MaxTokens   int                 `json:"max_tokens"`
+	Model           string              `json:"model"`
+	Messages        []openaiWireMessage `json:"messages"`
+	Temperature     float64             `json:"temperature"`
+	MaxTokens       int                 `json:"max_tokens"`
+	ReasoningEffort string              `json:"reasoning_effort,omitempty"`
 }
 
 func openaiContentText(v any) string {
@@ -58,6 +59,24 @@ func openaiContentText(v any) string {
 	}
 }
 
+// effectiveReasoningEffort 只给推理模型发 low：普通对话模型收到未知字段
+// 可能直接 400。模型名带 reflection/reasoning 或 o1/o3/o4 前缀时视为推理模型。
+func effectiveReasoningEffort(spec Spec) string {
+	if effort := strings.TrimSpace(spec.ReasoningEffort); effort != "" {
+		return effort
+	}
+	model := strings.ToLower(strings.TrimSpace(spec.Model))
+	switch {
+	case strings.Contains(model, "reflection"),
+		strings.Contains(model, "reasoning"),
+		strings.HasPrefix(model, "o1"),
+		strings.HasPrefix(model, "o3"),
+		strings.HasPrefix(model, "o4"):
+		return "low"
+	}
+	return ""
+}
+
 func (p *openaiProvider) Chat(ctx context.Context, req Request) (Response, error) {
 	base := strings.TrimRight(strings.TrimSpace(p.spec.BaseURL), "/")
 	if !strings.Contains(base, "/v1") {
@@ -73,8 +92,9 @@ func (p *openaiProvider) Chat(ctx context.Context, req Request) (Response, error
 			{Role: "system", Content: req.System},
 			{Role: "user", Content: req.User},
 		},
-		Temperature: req.Temperature,
-		MaxTokens:   effectiveMaxTokens(req.MaxTokens),
+		Temperature:     req.Temperature,
+		MaxTokens:       effectiveMaxTokens(req.MaxTokens),
+		ReasoningEffort: effectiveReasoningEffort(p.spec),
 	}
 	header := map[string]string{
 		"Content-Type":  "application/json",
@@ -89,7 +109,8 @@ func (p *openaiProvider) Chat(ctx context.Context, req Request) (Response, error
 	}
 	var decoded struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content any `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -108,5 +129,6 @@ func (p *openaiProvider) Chat(ctx context.Context, req Request) (Response, error
 		Text:             openaiContentText(decoded.Choices[0].Message.Content),
 		PromptTokens:     decoded.Usage.PromptTokens,
 		CompletionTokens: decoded.Usage.CompletionTokens,
+		FinishReason:     decoded.Choices[0].FinishReason,
 	}, nil
 }

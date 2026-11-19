@@ -17,6 +17,7 @@ func buildSystemPrompt(targetLang string) string {
 		"2. 每条译文必须写在同一行内（行内不得出现换行符）；一行就是一条，条与条之间只用一个换行分隔。\n" +
 		"3. 只输出译文行：不要解释、不要备注、不要罗马字注音、不要 Markdown 代码块、不要前言后语。\n" +
 		"4. 输入行首的 [i] 标记必须原样保留；原文中除行首标记外的其它标记（如 <0>、<1>、{name}、%s 这类占位符）必须原样保留在译文对应位置，不得改动、不得删除、不得新增。\n" +
+		"4.1 原文里形如 #命令(参数) 的内联脚本标记（如 #Page、#Hit、#NULL、#IfNumber(...)、#文章表示(0,0)）必须逐字原样保留在它原来的位置，不能翻译、不能删除、不能添加空格或换行。\n" +
 		"5. 每条的台词引号、命令前缀由系统另行处理，你只翻译纯日文句子本身，不要自行添加引号或前缀。\n\n" +
 		"【翻译要求】\n" +
 		"6. 逐条翻译，忠实完整：不漏译、不增译、不概括；原文很短时译文也要同样短促。\n" +
@@ -92,13 +93,16 @@ func parseChunkResponse(resp string, n int) (map[int]string, []int, []int) {
 	last := 0
 	for _, line := range strings.Split(resp, "\n") {
 		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || isFenceLine(trimmed) {
 			continue
 		}
 		idx, body, ok := parseNumberedLine(line)
 		if !ok {
-			if last > 0 {
-				got[last] = got[last] + strings.TrimSpace(line)
+			// 行号已经收齐后出现的非编号行多半是模型的结尾说明，不能再拼到
+			// 最后一条译文里；行号未收齐时则视为上一条被换行拆开的续行。
+			if last > 0 && len(got) < n {
+				got[last] = got[last] + trimmed
 			}
 			continue
 		}
@@ -132,11 +136,18 @@ func parseChunkResponse(resp string, n int) (map[int]string, []int, []int) {
 }
 
 func parseNumberedLine(line string) (int, string, bool) {
-	t := strings.TrimSpace(line)
+	t := strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+	// 部分模型会加 Markdown 前缀（`- [1]`、`> [1]`、行内代码反引号）。
+	t = strings.TrimSpace(strings.TrimLeft(t, "-*>↑`\u3000 "))
+	if strings.HasPrefix(t, "`") && strings.HasSuffix(t, "`") {
+		t = strings.TrimSpace(strings.Trim(t, "`"))
+	}
+	// 先把全角括号/数字归一，避免用字节下标切片时把多字节字符切坏。
+	t = normalizeDigits(strings.ReplaceAll(strings.ReplaceAll(t, "［", "["), "］", "]"))
 	if !strings.HasPrefix(t, "[") {
 		return 0, "", false
 	}
-	end := strings.Index(t, "]")
+	end := strings.IndexByte(t, ']')
 	if end <= 1 {
 		return 0, "", false
 	}
@@ -145,7 +156,26 @@ func parseNumberedLine(line string) (int, string, bool) {
 		return 0, "", false
 	}
 	body := strings.TrimSpace(t[end+1:])
+	body = strings.TrimSpace(strings.TrimLeft(body, "：:、 "))
+	body = strings.TrimSpace(strings.Trim(body, "`"))
 	return num, body, true
+}
+
+// normalizeDigits 把全角数字转成半角：模型偶尔会输出 ［１］。
+func normalizeDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '０' && r <= '９' {
+			b.WriteRune('0' + (r - '０'))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func isFenceLine(line string) bool {
+	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
 }
 
 func stripNumberPrefix(s string) string {

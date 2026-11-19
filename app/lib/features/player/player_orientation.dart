@@ -19,6 +19,18 @@ Future<void> enterPortrait() async {
   );
 }
 
+/// 播放页进入时的固定姿态：横屏 + 沉浸式。
+///
+/// 需求是"游玩时整个界面都是游戏画面，且默认直接横屏"，所以这里在页面
+/// initState 就切，不等布局算完——晚一帧用户就会先看到一帧竖屏再被掰过去。
+Future<void> enterPlayerLandscape() => enterLandscape();
+
+/// 离开播放页时恢复竖屏 + 边到边。
+///
+/// 桌面/平板允许横屏常驻，但手机上的外壳是竖屏设计：不恢复的话，回到游戏库
+/// 会以横屏呈现，卡片会被压扁。
+Future<void> leavePlayer() => enterPortrait();
+
 Future<void> restoreSystemUi() async {
   try {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

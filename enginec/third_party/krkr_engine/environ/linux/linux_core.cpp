@@ -1,0 +1,119 @@
+#include "tjsCommHead.h"
+
+#include "Platform.h"
+#include "TVPApplication.h"
+#include "UtilStreams.h"
+#include "PlatformVideo.h"
+
+#include <sys/utsname.h>
+#include <fstream>
+
+//---------------------------------------------------------------------------
+tTVPMemoryStream* GetResourceStream(const ttstr& filename)
+{
+    static ttstr resourceBasePath = TVPNormalizeStorageName(TVPNativeExeDir) + TJS_N("Res/");
+    tTJSBinaryStream* tmp = TVPCreateBinaryStreamForRead(resourceBasePath + filename, 0);
+    // The reference Linux tree ships Res/DroidSansFallback.ttf; a portable build
+    // (and the host test) usually does not. A failed open is not an exception on
+    // this backend (the stream object is returned with no handle), so reject the
+    // empty/negative size before allocating: otherwise GetSize()'s -1 becomes a
+    // huge allocation and startup dies during font enumeration.
+    if (!tmp) return nullptr;
+    const tjs_uint64 size = tmp->GetSize();
+    if (size == 0 || size > 512ull * 1024 * 1024) { delete tmp; return nullptr; }
+    tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, static_cast<tjs_uint>(size));
+    tmp->ReadBuffer(ret->GetInternalBuffer(), static_cast<tjs_uint>(size));
+    delete tmp;
+    return ret;
+}
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+std::string TVPGetPackageVersionString()
+{
+    return "linux";
+}
+ttstr TVPGetOSName()
+{
+    // Linux发行版检测
+    std::string id;
+    std::string version_id;
+    std::string pretty_name;
+    std::ifstream file("/etc/os-release");
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (line.find("ID=") == 0)
+        {
+            id = line.substr(3);
+            if (!id.empty() && id.front() == '"')
+            {
+                id = id.substr(1, id.size() - 2);
+            }
+        }
+        else if (line.find("VERSION_ID=") == 0)
+        {
+            version_id = line.substr(11);
+            if (!version_id.empty() && version_id.front() == '"')
+            {
+                version_id = version_id.substr(1, version_id.size() - 2);
+            }
+        }
+        else if (line.find("PRETTY_NAME=") == 0)
+        {
+            pretty_name = line.substr(12);
+            if (!pretty_name.empty() && pretty_name.front() == '"')
+            {
+                pretty_name = pretty_name.substr(1, pretty_name.size() - 2);
+            }
+        }
+    }
+    if (!pretty_name.empty())
+    {
+        return pretty_name;
+    }
+    if (!id.empty())
+    {
+        if (id == "ubuntu")
+            return "Ubuntu " + version_id;
+        if (id == "debian")
+            return "Debian " + version_id;
+        if (id == "fedora")
+            return "Fedora " + version_id;
+        if (id == "centos")
+            return "CentOS " + version_id;
+        if (id == "rhel")
+            return "Red Hat " + version_id;
+        if (id == "arch")
+            return "Arch Linux";
+        return id + " " + version_id;
+    }
+    struct utsname buffer;
+    if (uname(&buffer) == 0)
+    {
+        return std::string(buffer.sysname) + " " + buffer.release;
+    }
+
+    return "Linux";
+}
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+void TVPInvokeMenu(int x, int y, void* _menu)
+{
+
+}
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// Linux 没有系统视频播放器实现（视频走 FFmpeg/wuffmpeg 插件路径）
+// 返回 nullptr，调用方会回退到 NullLayerPlayer / NullOverlayPlayer
+// （见 krmovie.cpp TryCreateLayer / TryCreateOverlay）
+//---------------------------------------------------------------------------
+LayerVideoPlayer* CreateLayerVideoPlayer(TVPVideoEventCallback /*cb*/, void* /*cbctx*/)
+{
+    return nullptr;
+}
+OverlayVideoPlayer* CreateOverlayVideoPlayer(TVPVideoEventCallback /*cb*/, void* /*cbctx*/)
+{
+    return nullptr;
+}

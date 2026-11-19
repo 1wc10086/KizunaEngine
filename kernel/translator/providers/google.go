@@ -66,7 +66,8 @@ func (p *googleProvider) Chat(ctx context.Context, req Request) (Response, error
 	}
 	var decoded struct {
 		Candidates []struct {
-			Content struct {
+			FinishReason string `json:"finishReason"`
+			Content      struct {
 				Parts []struct {
 					Text string `json:"text"`
 				} `json:"parts"`
@@ -91,5 +92,6 @@ func (p *googleProvider) Chat(ctx context.Context, req Request) (Response, error
 		Text:             b.String(),
 		PromptTokens:     decoded.UsageMetadata.PromptTokenCount,
 		CompletionTokens: decoded.UsageMetadata.CandidatesTokenCount,
+		FinishReason:     decoded.Candidates[0].FinishReason,
 	}, nil
 }

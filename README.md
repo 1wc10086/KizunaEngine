@@ -57,10 +57,22 @@ KizunaEngine 使用Flutter渲染运行各种视觉小说引擎。
 <summary>引擎支持列表</summary>
 
 - `Bishop`
- Bishop
+ aka Bishop
 
 - `Overdose`
  aka Emon
+
+- `Moon`
+ aka Over-Dose-Moon
+ 
+- `Kirikiroid`
+ aka Kirikiri
+
+- `Blackpackage`
+ aka Ffa
+ 
+- `Tmr-Hiro`
+ aka Lune
  
 </details>
 

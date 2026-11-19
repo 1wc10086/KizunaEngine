@@ -15,8 +15,8 @@ import 'core/platform/app_paths.dart';
 import 'core/platform/platform_info.dart';
 import 'core/platform/storage_access.dart';
 import 'core/settings/settings.dart';
-import 'features/library/library_notifier.dart';
-import 'features/settings/settings_notifier.dart';
+import 'core/text/host_text.dart';
+import 'features/library/viewmodel/library_notifier.dart';
 
 void main() {
   runZonedGuarded(() async {
@@ -29,6 +29,12 @@ void main() {
         const <DeviceOrientation>[DeviceOrientation.portraitUp],
       );
     }
+    // 字形光栅化交给 Flutter 文字栈。这里只准备 root isolate 的光栅化服务：
+    // C 侧是在 KzcEngineInvoke 的调用线程上同步回调的，NativeCallable 只能由
+    // 创建引擎的那个 isolate 安装，所以真正的 installHostText(library, port)
+    // 由引擎 worker 在 create() 之前完成（见 core/bridge/engine_bridge.dart）。
+    // 服务没建起来时 C++ 侧回退 FreeType，不会崩。
+    installHostText();
     // 影片解码器注册必须早于任何 VideoPlayerController 的创建，所以放在启动阶段。
     // Bishop 的 OP / 片尾是 MPEG-1：Android 的 MediaCodec 没有 mpeg1video 解码器，
     // 所以让 fvp（libmdk + FFmpeg）接管 VideoPlayerPlatform。
@@ -39,7 +45,7 @@ void main() {
     fvp.registerWith();
     // 支持目录只解析一次，设置仓库与崩溃目录共用这个 Future。这里不 await：
     // 目录创建与文件读取都延后到首次访问（后台完成），首帧不被文件 I/O 挡住；
-    // 设置还没就绪时消费方用默认值（app.dart 本来就是 AsyncValue + 默认 AppSettings）。
+    // 设置还没就绪时消费方用默认值（app.dart 用 valueOrDefault 兜底）。
     final support = appPrivateDirectory();
     final repository = SettingsRepository.lazy(
       () async => (await support).path,

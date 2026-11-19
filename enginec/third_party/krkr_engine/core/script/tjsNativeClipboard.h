@@ -1,0 +1,60 @@
+//---------------------------------------------------------------------------
+/*
+        TVP2 ( T Visual Presenter 2 )  A script authoring tool
+        Copyright (C) 2000 W.Dee <dee@kikyou.info> and contributors
+
+        See details of license at "license.txt"
+*/
+//---------------------------------------------------------------------------
+// Clipboard Class interface
+//---------------------------------------------------------------------------
+#ifndef ClipboardIntfH
+#define ClipboardIntfH
+#include "tjsNative.h"
+
+/*[*/
+//---------------------------------------------------------------------------
+// tTVPClipboardFormat
+//---------------------------------------------------------------------------
+enum tTVPClipboardFormat
+{
+    cbfText = 1
+};
+/*]*/
+
+//---------------------------------------------------------------------------
+// implement these in each platform
+//---------------------------------------------------------------------------
+extern bool TVPClipboardHasFormat(tTVPClipboardFormat format);
+extern void TVPClipboardSetText(const ttstr& text);
+extern bool TVPClipboardGetText(ttstr& text);
+
+//---------------------------------------------------------------------------
+// tTJSNI_BaseClipboard
+//---------------------------------------------------------------------------
+class tTJSNI_BaseClipboard : public tTJSNativeInstance
+{
+public:
+    virtual tjs_error Construct(tjs_int numparams, tTJSVariant** param, iTJSDispatch2* dsp);
+    virtual void Invalidate();
+};
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// tTJSNC_Clipboard : TJS Clipboard Class
+//---------------------------------------------------------------------------
+class tTJSNC_Clipboard : public tTJSNativeClass
+{
+    typedef tTJSNativeClass inherited;
+
+public:
+    tTJSNC_Clipboard();
+    static tjs_uint32 ClassID;
+
+protected:
+    tTJSNativeInstance* CreateNativeInstance();
+};
+//---------------------------------------------------------------------------
+extern tTJSNativeClass* TVPCreateNativeClass_Clipboard();
+//---------------------------------------------------------------------------
+#endif

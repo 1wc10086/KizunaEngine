@@ -1,0 +1,307 @@
+#include "FreeTypeFontRasterizer.h"
+#include "HostGlyphRasterizer.h"
+#include "PlatformTextHook.h"
+#include "LayerBitmap.h"
+#include "FreeTypeImp.h"
+#include "TVPMsg.h"
+#include "TVPFont.h"
+#include <algorithm>
+
+extern void TVPUninitializeFreeFont();
+extern const ttstr& TVPGetDefaultFontName();
+void FreeTypeFontRasterizer::ApplyFallbackFace()
+{
+    if (!FaceFallback && Face && Face->GetFontName() != TVPGetDefaultFontName())
+    {
+        FaceFallback = new tFreeTypeFace(TVPGetDefaultFontName(), 0);
+    }
+    if (!FaceFallback)
+        return;
+    FaceFallback->SetHeight(CurrentFont.Height < 0 ? -CurrentFont.Height : CurrentFont.Height);
+    if (CurrentFont.Flags & TVP_TF_ITALIC)
+    {
+        FaceFallback->SetOption(TVP_TF_ITALIC);
+    }
+    else
+    {
+        FaceFallback->ClearOption(TVP_TF_ITALIC);
+    }
+    if (CurrentFont.Flags & TVP_TF_BOLD)
+    {
+        FaceFallback->SetOption(TVP_TF_BOLD);
+    }
+    else
+    {
+        FaceFallback->ClearOption(TVP_TF_BOLD);
+    }
+    if (CurrentFont.Flags & TVP_TF_UNDERLINE)
+    {
+        FaceFallback->SetOption(TVP_TF_UNDERLINE);
+    }
+    else
+    {
+        FaceFallback->ClearOption(TVP_TF_UNDERLINE);
+    }
+    if (CurrentFont.Flags & TVP_TF_STRIKEOUT)
+    {
+        FaceFallback->SetOption(TVP_TF_STRIKEOUT);
+    }
+    else
+    {
+        FaceFallback->ClearOption(TVP_TF_STRIKEOUT);
+    }
+}
+
+FreeTypeFontRasterizer::FreeTypeFontRasterizer() : RefCount(0), Face(NULL), LastBitmap(NULL)
+{
+    FaceCache.reserve(MaxCachedFaces);
+    AddRef();
+}
+FreeTypeFontRasterizer::~FreeTypeFontRasterizer()
+{
+    Face = NULL;
+    if (FaceFallback)
+    {
+        delete FaceFallback;
+        FaceFallback = nullptr;
+    }
+}
+void FreeTypeFontRasterizer::AddRef()
+{
+    RefCount++;
+}
+//---------------------------------------------------------------------------
+void FreeTypeFontRasterizer::Release()
+{
+    RefCount--;
+    LastBitmap = NULL;
+    if (RefCount == 0)
+    {
+        delete this;
+    }
+}
+//---------------------------------------------------------------------------
+void FreeTypeFontRasterizer::ApplyFont(class tTVPNativeBaseBitmap* bmp, bool force)
+{
+    if (bmp != LastBitmap || force)
+    {
+        ApplyFont(bmp->GetFont());
+        LastBitmap = bmp;
+    }
+}
+//---------------------------------------------------------------------------
+void FreeTypeFontRasterizer::ApplyFont(const tTVPFont& font)
+{
+    CurrentFont = font;
+    ttstr stdname = TVPGetBeingFont(font.Face);
+    // Remember the resolved family for the host glyph seam (see header).
+    ResolvedFaceName = stdname;
+    if (!ResolvedFaceName.IsEmpty() && ResolvedFaceName.c_str()[0] == TJS_N('@'))
+        ResolvedFaceName = ttstr(ResolvedFaceName.c_str() + 1);
+    // TVP_FACE_OPTIONS_NO_ANTIALIASING
+    // TVP_FACE_OPTIONS_NO_HINTING
+    // TVP_FACE_OPTIONS_FORCE_AUTO_HINTING
+    tjs_uint32 opt = 0;
+    opt |= (font.Flags & TVP_TF_ITALIC) ? TVP_TF_ITALIC : 0;
+    opt |= (font.Flags & TVP_TF_BOLD) ? TVP_TF_BOLD : 0;
+    opt |= (font.Flags & TVP_TF_UNDERLINE) ? TVP_TF_UNDERLINE : 0;
+    opt |= (font.Flags & TVP_TF_STRIKEOUT) ? TVP_TF_STRIKEOUT : 0;
+    opt |= (font.Flags & TVP_TF_FONTFILE) ? TVP_FACE_OPTIONS_FILE : 0;
+    if (!Face || Face->GetFontName() != stdname)
+    {
+        // Captions alternate font families frequently. Keep a small per-rasterizer
+        // LRU so switching does not reopen and parse the same font every time.
+        auto cached = std::find_if(FaceCache.begin(), FaceCache.end(),
+                                  [&](const auto& face)
+                                  { return face->GetFontName() == stdname; });
+        if (cached != FaceCache.end())
+        {
+            std::rotate(cached, cached + 1, FaceCache.end());
+        }
+        else
+        {
+            // Construct first so an opening failure leaves the current face valid.
+            auto face = std::make_unique<tFreeTypeFace>(stdname, opt);
+            if (FaceCache.size() == MaxCachedFaces)
+                FaceCache.erase(FaceCache.begin());
+            FaceCache.push_back(std::move(face));
+        }
+        Face = FaceCache.back().get();
+        // A reused face must start with the same sampling options as a new one.
+        Face->ClearOption(TVP_FACE_OPTIONS_NO_ANTIALIASING | TVP_FACE_OPTIONS_NO_HINTING);
+    }
+    Face->ClearOption(TVP_TF_ITALIC | TVP_TF_BOLD | TVP_TF_UNDERLINE | TVP_TF_STRIKEOUT |
+                      TVP_FACE_OPTIONS_FILE);
+    Face->SetOption(opt);
+    Face->SetHeight(font.Height < 0 ? -font.Height : font.Height);
+    LastBitmap = NULL;
+}
+//---------------------------------------------------------------------------
+void FreeTypeFontRasterizer::GetTextExtent(tjs_wchar ch, tjs_int& w, tjs_int& h)
+{
+    if (Face)
+    {
+        tGlyphMetrics metrics;
+        if (Face->GetGlyphSizeFromCharcode(ch, metrics))
+        {
+            w = metrics.CellIncX;
+            h = metrics.CellIncY;
+        }
+        else
+        {
+            w = Face->GetHeight();
+            h = w;
+        }
+    }
+}
+//---------------------------------------------------------------------------
+tjs_int FreeTypeFontRasterizer::GetAscentHeight()
+{
+    if (Face)
+        return Face->GetAscent();
+    return 0;
+}
+static bool isUnicodeSpace(char16_t ch)
+{
+    return (ch >= 0x0009 && ch <= 0x000D) || ch == 0x0020 || ch == 0x0085 || ch == 0x00A0 ||
+           ch == 0x1680 || (ch >= 0x2000 && ch <= 0x200A) || ch == 0x2028 || ch == 0x2029 ||
+           ch == 0x202F || ch == 0x205F || ch == 0x3000;
+}
+//---------------------------------------------------------------------------
+tTVPCharacterData* FreeTypeFontRasterizer::GetBitmap(const tTVPFontAndCharacterData& font,
+                                                     tjs_int aofsx,
+                                                     tjs_int aofsy)
+{
+    if (font.Antialiased)
+    {
+        Face->ClearOption(TVP_FACE_OPTIONS_NO_ANTIALIASING);
+    }
+    else
+    {
+        Face->SetOption(TVP_FACE_OPTIONS_NO_ANTIALIASING);
+    }
+    if (font.Hinting)
+    {
+        Face->ClearOption(TVP_FACE_OPTIONS_NO_HINTING);
+        // Face->SetOption( TVP_FACE_OPTIONS_FORCE_AUTO_HINTING );
+    }
+    else
+    {
+        Face->SetOption(TVP_FACE_OPTIONS_NO_HINTING);
+        // Face->ClearOption( TVP_FACE_OPTIONS_FORCE_AUTO_HINTING );
+    }
+
+    // Host glyph first (see HostGlyphRasterizer.h): the platform text stack owns
+    // font availability and hinting. A miss (hook absent, cache still warming,
+    // unusable reply) leaves the FreeType path below untouched, so the engine
+    // keeps rendering exactly as before in that case.
+    // The advance is taken from FreeType because GetTextExtent measures with it;
+    // drawing with a different advance would drift against the layout.
+    tjs_int host_advance = 0;
+    if (TVPTextRenderHook != nullptr && Face != nullptr)
+    {
+        tGlyphMetrics size_metrics;
+        if (Face->GetGlyphSizeFromCharcode(font.Character, size_metrics))
+            host_advance = size_metrics.CellIncX;
+    }
+    // Ask the host for the face the engine actually resolved (not the raw game
+    // request): Flutter can then pick the same family instead of its own fallback.
+    tTVPFont host_font = font.Font;
+    if (!ResolvedFaceName.IsEmpty())
+        host_font.Face = ResolvedFaceName;
+    tTVPCharacterData* data = TVPGetHostGlyph(host_font, font.Character, font.Antialiased,
+                                              Face ? Face->GetAscent() : 0, host_advance);
+    if (data == nullptr)
+    {
+        data = Face->GetGlyphFromCharcode(font.Character);
+        if (!data && !isUnicodeSpace(font.Character))
+        {
+            ApplyFallbackFace();
+            if (FaceFallback)
+            {
+                data = FaceFallback->GetGlyphFromCharcode(font.Character);
+            }
+        }
+        if (data == NULL)
+        {
+            data = Face->GetGlyphFromCharcode(Face->GetDefaultChar());
+        }
+        if (data == NULL)
+        {
+            data = Face->GetGlyphFromCharcode(Face->GetFirstChar());
+        }
+        if (data == NULL)
+        {
+            TVPThrowExceptionMessage(TVPFontRasterizeError);
+        }
+    }
+
+    int cx = data->Metrics.CellIncX;
+    int cy = data->Metrics.CellIncY;
+    if (font.Font.Angle == 0)
+    {
+        data->Metrics.CellIncX = cx;
+        data->Metrics.CellIncY = 0;
+    }
+    else if (font.Font.Angle == 2700)
+    {
+        data->Metrics.CellIncX = 0;
+        data->Metrics.CellIncY = cx;
+    }
+    else
+    {
+        double angle = font.Font.Angle * (M_PI / 1800);
+        data->Metrics.CellIncX = static_cast<tjs_int>(std::cos(angle) * cx);
+        data->Metrics.CellIncY = static_cast<tjs_int>(-std::sin(angle) * cx);
+    }
+
+    data->Antialiased = font.Antialiased;
+    data->FullColored = false;
+    data->Blured = font.Blured;
+    data->BlurWidth = font.BlurWidth;
+    data->BlurLevel = font.BlurLevel;
+    data->OriginX += aofsx; // for vertical text
+                            //	data->OriginY += aofsy;
+
+    // apply blur
+    if (font.Blured)
+        data->Blur(); // nasty ...
+    return data;
+}
+//---------------------------------------------------------------------------
+void FreeTypeFontRasterizer::GetGlyphDrawRect(std::vector<tjs_wchar> text, tTVPRect& area)
+{
+    // アンチエイリアスとヒンティングは有効にする
+    Face->ClearOption(TVP_FACE_OPTIONS_NO_ANTIALIASING);
+    Face->ClearOption(TVP_FACE_OPTIONS_NO_HINTING);
+
+    area.left = area.top = area.right = area.bottom = 0;
+    tjs_int offsetx = 0;
+    tjs_int offsety = 0;
+    tjs_uint len = text.size();
+    for (tjs_uint i = 0; i < len; i++)
+    {
+        tjs_wchar ch = text[i];
+        tjs_int ax, ay;
+        tTVPRect rt(0, 0, 0, 0);
+        bool result = Face->GetGlyphRectFromCharcode(rt, ch, ax, ay);
+        if (result == false)
+            result = Face->GetGlyphRectFromCharcode(rt, Face->GetDefaultChar(), ax, ay);
+        if (result == false)
+            result = Face->GetGlyphRectFromCharcode(rt, Face->GetFirstChar(), ax, ay);
+        if (result)
+        {
+            rt.add_offsets(offsetx, offsety);
+            if (i != 0)
+            {
+                area.do_union(rt);
+            }
+            else
+            {
+                area = rt;
+            }
+        }
+        offsetx += ax;
+        offsety = 0;
+    }
+}

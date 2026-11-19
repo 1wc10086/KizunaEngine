@@ -1,5 +1,5 @@
 // Command bridge 是 Apple 平台（iOS / macOS）唯一导出的 FFI 入口，
-// 把引擎（kizuna/engine）和内核（kizuna/kernel）的 C ABI 合并进同一个 Go 运行时。
+// 把引擎（kizuna/enginego）和内核（kizuna/kernel）的 C ABI 合并进同一个 Go 运行时。
 //
 // 为什么不直接链接 engine 与 kernel 两个 c-archive：
 //   - iOS 只支持 -buildmode=c-archive，c-shared 在 ios/arm64 上被 Go 明确拒绝；
@@ -18,7 +18,7 @@ import "C"
 import (
 	"unsafe"
 
-	"kizuna/engine/capi"
+	"kizuna/enginego/capi"
 	_ "kizuna/kernel/drivers"
 	"kizuna/kernel/shell"
 )

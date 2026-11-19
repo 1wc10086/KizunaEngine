@@ -31,7 +31,7 @@ class ReleaseInfo {
 class UpdateService {
   /// 更新发布仓库（对终端用户公开）。
   ///
-  /// 注意它和 CI 构建仓库不是同一个：`messiah18envious/expert-journey`
+  /// 注意它和 CI 构建仓库不是同一个：`fivewizened7e/urban-tribble`
   /// 只用来跑 GitHub Actions，仓库本身是私有的，匿名设备读不到 release；
   /// 应用内的检查/下载必须指向公开的发布仓库，否则所有人都会 403/404。
   static const String repositorySlug = '1wc10086/KizunaEngine';

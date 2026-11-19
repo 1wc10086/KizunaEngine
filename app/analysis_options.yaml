@@ -1,5 +1,20 @@
+# 静态分析配置。
+#
+# 基础规则沿用 flutter_lints，这里只做两件事：
+#  * 把各平台 runner 目录排除出分析（它们由 `flutter create` 生成，
+#    与本包代码无关，analyze 时只会产生噪声）。
+#  * 不加更严格的风格规则：仓库里同时有 UI 层与协议层，后者需要直接操作
+#    字节与 FFI 指针，过严的风格检查只会逼出成片的 ignore 注释。
+#
+# 注意：CI 只跑 `flutter pub get` + `flutter build apk`，不跑 analyze；
+# 这里的配置面向本地开发，不应引入会让既有代码大面积报错的条目。
 analyzer:
   exclude:
     - build/**
     - android/**
+    - ios/**
+    - linux/**
+    - macos/**
+    - windows/**
+
 include: package:flutter_lints/flutter.yaml

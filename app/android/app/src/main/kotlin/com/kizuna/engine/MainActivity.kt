@@ -31,6 +31,10 @@ class MainActivity : FlutterActivity() {
     private var pendingStorageResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
+        // 注意：不要用 System.loadLibrary 预热 libenginec。它的 JNI_OnLoad 是
+        // SDL 的（org/libsdl.app.* 类不在本应用里，FindClass 失败会留 pending
+        // 异常），VM 视为加载失败，启动即崩。JavaVM 预热改由崩溃报告定位后
+        // 在原生侧解决。
         super.configureFlutterEngine(engine)
         MethodChannel(engine.dartExecutor.binaryMessenger, "kizuna/installer").setMethodCallHandler { call, result ->
             when (call.method) {

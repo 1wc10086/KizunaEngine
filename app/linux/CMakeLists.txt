@@ -1,6 +1,7 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.13)
-project(runner LANGUAGES CXX)
+# VERSION 跟随 app/pubspec.yaml，由 `python3 tools/version.py stamp` 同步。
+project(runner VERSION 1.0.0 LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
@@ -103,16 +104,17 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
-# Go 引擎 / 内核共享库。
+# Go 引擎 / 内核 / C++ 核心共享库。
 #
-# CI 在 CMake configure 之前把 `go build -buildmode=c-shared` 的产物放到
-# app/native/linux/；本地没有构建 Go 时这里整体跳过，Flutter 本体仍可运行，
-# 只是打开游戏时 FFI 会报“找不到 libengine.so”。
+# CI 在 CMake configure 之前把 `go build -buildmode=c-shared` 和 enginec 的产物
+# 放到 app/native/linux/；本地没构建原生库时这里整体跳过，Flutter 本体仍可运行，
+# 只是打开游戏时 FFI 会报“找不到 libenginego.so / libenginec.so”。
+# 用 glob 而不是写死文件名：Go 产物是 libenginego.so，C++ 是 libenginec.so，
+# 早期这里写的 libengine.so 两边都不匹配，导致本地 CMake 安装漏库。
 set(KIZUNA_NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../native/linux")
-if(EXISTS "${KIZUNA_NATIVE_DIR}/libengine.so")
-  install(FILES
-      "${KIZUNA_NATIVE_DIR}/libengine.so"
-      "${KIZUNA_NATIVE_DIR}/libkernel.so"
+file(GLOB KIZUNA_NATIVE_LIBS "${KIZUNA_NATIVE_DIR}/*.so" "${KIZUNA_NATIVE_DIR}/*.so.*")
+if(KIZUNA_NATIVE_LIBS)
+  install(FILES ${KIZUNA_NATIVE_LIBS}
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()

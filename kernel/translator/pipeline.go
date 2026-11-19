@@ -235,13 +235,45 @@ func (p *pipe) singleTranslate(ctx context.Context, orig string) (string, error)
 		return "", err
 	}
 	got, missing, _ := parseChunkResponse(resp.Text, 1)
-	if len(missing) > 0 {
-		return "", fmt.Errorf("translator: single retry missing line")
+	if len(missing) == 0 && strings.TrimSpace(got[1]) != "" {
+		return strings.TrimSpace(got[1]), nil
 	}
-	return strings.TrimSpace(got[1]), nil
+	// 推理模型偶尔只给译文本体、不带 [1]。单条请求里没有其它行可混淆，
+	// 取第一行有效文本即可；仍要过滤代码围栏和常见前缀。
+	if fallback := stripSingleFallback(resp.Text); fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("translator: single retry missing line")
+}
+
+// stripSingleFallback 提取单条响应的正文：跳过空行/围栏，去掉
+// “译文：/翻译：/输出：”与行号前缀，取第一行非空内容。
+func stripSingleFallback(resp string) string {
+	for _, line := range strings.Split(resp, "\n") {
+		t := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if t == "" || isFenceLine(t) {
+			continue
+		}
+		t = strings.TrimSpace(strings.TrimPrefix(t, "\ufeff"))
+		for _, prefix := range []string{"译文：", "译文:", "翻译：", "翻译:", "输出：", "输出:"} {
+			t = strings.TrimSpace(strings.TrimPrefix(t, prefix))
+		}
+		if _, body, ok := parseNumberedLine(t); ok {
+			if strings.TrimSpace(body) != "" {
+				return strings.TrimSpace(body)
+			}
+			continue
+		}
+		return t
+	}
+	return ""
 }
 
 func (p *pipe) translateChunk(ctx context.Context, chunk []int, jobs []transJob, results []string, skipped []bool) error {
+	return p.translateChunkDepth(ctx, chunk, jobs, results, skipped, 0)
+}
+
+func (p *pipe) translateChunkDepth(ctx context.Context, chunk []int, jobs []transJob, results []string, skipped []bool, depth int) error {
 	items := make([]promptItem, 0, len(chunk))
 	texts := make([]string, 0, len(chunk))
 	for _, ji := range chunk {
@@ -254,6 +286,16 @@ func (p *pipe) translateChunk(ctx context.Context, chunk []int, jobs []transJob,
 		return err
 	}
 	got, missing, _ := parseChunkResponse(resp.Text, len(chunk))
+	// 推理模型把预算全烧在思维链上时会返回空 content / finish_reason=length。
+	// 对半拆块重试一次比逐条重试更快，也避免一半以上行号同时缺失。
+	if len(chunk) > 1 && depth < 2 && (strings.TrimSpace(resp.Text) == "" || (resp.FinishReason == "length" && len(missing) > len(chunk)/2)) {
+		middle := len(chunk) / 2
+		p.send(Event{Type: "log", Level: "warn", Message: fmt.Sprintf("块输出为空或截断（finish=%s），拆成 %d+%d 条重试", resp.FinishReason, middle, len(chunk)-middle)})
+		if err := p.translateChunkDepth(ctx, chunk[:middle], jobs, results, skipped, depth+1); err != nil {
+			return err
+		}
+		return p.translateChunkDepth(ctx, chunk[middle:], jobs, results, skipped, depth+1)
+	}
 	for _, m := range missing {
 		ji := chunk[m-1]
 		retry, rerr := p.singleTranslate(ctx, jobs[ji].orig)

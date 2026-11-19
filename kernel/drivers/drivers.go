@@ -8,4 +8,6 @@ import (
 	_ "kizuna/kernel/brand/bishop/scf"
 	_ "kizuna/kernel/brand/bishop/scs"
 	_ "kizuna/kernel/brand/emonengine/eme"
+	_ "kizuna/kernel/brand/overdose/arc"
+	_ "kizuna/kernel/brand/overdose/asb"
 )

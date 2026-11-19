@@ -2,7 +2,7 @@ GO ?= go
 IOS_SDK ?= $(shell xcrun --sdk iphoneos --show-sdk-path)
 IOS_MIN ?= 15.0
 
-# Apple 静态库：engine + kernel 合成一份 Go 运行时（原因见 cmd/bridge/main.go）。
+# Apple 静态库：enginego + kernel 合成一份 Go 运行时（原因见 cmd/bridge/main.go）。
 #
 # 注意不要给 c-archive 加 -ldflags=-s：-s 会丢掉符号表，Xcode 链接时
 # 需要从 .a 里解析 KzEngine* / Kz* 符号，丢了就直接 link 失败。

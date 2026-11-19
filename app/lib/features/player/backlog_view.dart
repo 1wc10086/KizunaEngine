@@ -12,7 +12,7 @@ class BacklogView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     return Positioned.fill(
       child: Container(
         color: const Color(0xE6000000),
@@ -33,10 +33,18 @@ class BacklogView extends StatelessWidget {
             Expanded(
               child: entries.isEmpty
                   ? Center(
-                      child: Text(
-                        l10n.commonEmpty,
-                        style: const TextStyle(
-                            color: Color(0xFFFFFFFF)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          // 空回想有两种来源：还没读到任何对白、以及引擎根本不提供
+                          // 文本列表（Emon 的 TextList 恒为 nil）。都按"读取中无内容"
+                          // 处理已经是最中性的文案，单独加"不支持"的说明会让玩家
+                          // 误以为是故障；这里保持空状态文本，不区分来源。
+                          l10n.commonEmpty,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: Color(0xFFFFFFFF)),
+                        ),
                       ),
                     )
                   : ListView.builder(
@@ -46,13 +54,29 @@ class BacklogView extends StatelessWidget {
                         return Padding(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 6),
-                          child: Text(
-                            entry.text,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                    color: const Color(0xFFFFFFFF)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              if (entry.id.isNotEmpty)
+                                Text(
+                                  entry.id,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(
+                                          color: const Color(0xFFFFFFFF)),
+                                ),
+                              Text(
+                                entry.text,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                        color: const Color(0xFFFFFFFF)),
+                              ),
+                            ],
                           ),
                         );
                       },
